@@ -136,9 +136,8 @@ export function MediaView() {
 											completedAt: Date.now(),
 										});
 										if (status.result?.normalized_url) {
-											const pm = useProjectManager.getState();
-											pm.editor.media.updateMediaAsset({
-												projectId: pm.active!.id,
+											editor.media.updateMediaAsset({
+												projectId: activeProject.metadata.id,
 												id: mediaId,
 												updates: { normalizedUrl: status.result.normalized_url }
 											});
