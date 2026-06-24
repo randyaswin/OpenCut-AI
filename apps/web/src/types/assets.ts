@@ -8,4 +8,6 @@ export interface MediaAsset
 	url?: string;
 	proxyFile?: File;
 	proxyUrl?: string;
+	normalizedFile?: File;
+	normalizedUrl?: string;
 }

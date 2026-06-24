@@ -53,7 +53,7 @@ export class MediaManager {
 	}: {
 		projectId: string;
 		id: string;
-		updates: Partial<Pick<MediaAsset, "label" | "name">>;
+		updates: Partial<Pick<MediaAsset, "label" | "name" | "normalizedFile" | "normalizedUrl">>;
 	}): Promise<void> {
 		const index = this.assets.findIndex((a) => a.id === id);
 		if (index === -1) return;
@@ -88,6 +88,9 @@ export class MediaManager {
 			}
 			if (asset.proxyUrl) {
 				URL.revokeObjectURL(asset.proxyUrl);
+			}
+			if (asset.normalizedUrl) {
+				URL.revokeObjectURL(asset.normalizedUrl);
 			}
 		}
 
@@ -159,6 +162,9 @@ export class MediaManager {
 			if (asset.proxyUrl) {
 				URL.revokeObjectURL(asset.proxyUrl);
 			}
+			if (asset.normalizedUrl) {
+				URL.revokeObjectURL(asset.normalizedUrl);
+			}
 		});
 
 		for (const [id, controller] of this.proxyGenerators) {
@@ -201,6 +207,9 @@ export class MediaManager {
 			}
 			if (asset.proxyUrl) {
 				URL.revokeObjectURL(asset.proxyUrl);
+			}
+			if (asset.normalizedUrl) {
+				URL.revokeObjectURL(asset.normalizedUrl);
 			}
 		});
 

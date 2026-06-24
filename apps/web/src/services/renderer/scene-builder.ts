@@ -70,12 +70,16 @@ function buildTrackNodes({
 					mediaAsset.proxyFile &&
 					mediaAsset.proxyUrl;
 
-				const effectiveFile = shouldUseProxy
-					? mediaAsset.proxyFile!
-					: mediaAsset.file;
-				const effectiveUrl = shouldUseProxy
-					? mediaAsset.proxyUrl!
-					: mediaAsset.url;
+				const effectiveFile = mediaAsset.normalizedFile
+					? mediaAsset.normalizedFile
+					: shouldUseProxy
+						? mediaAsset.proxyFile!
+						: mediaAsset.file;
+				const effectiveUrl = mediaAsset.normalizedUrl
+					? mediaAsset.normalizedUrl
+					: shouldUseProxy
+						? mediaAsset.proxyUrl!
+						: mediaAsset.url;
 
 				if (mediaAsset.type === "video") {
 					nodes.push(

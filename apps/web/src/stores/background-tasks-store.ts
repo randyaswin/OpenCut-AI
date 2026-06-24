@@ -20,6 +20,7 @@ export interface BackgroundTask {
 		| "broll-batch"
 		| "smart-cut"
 		| "proxy-generation"
+		| "normalization"
 		| "dubbing";
 	label: string;
 	status: BackgroundTaskStatus;
