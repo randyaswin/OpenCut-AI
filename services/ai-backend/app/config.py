@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     OPENAI_MODEL: str = "gpt-4o"
     OPENAI_IMAGE_MODEL: str = "dall-e-3"
+    OPENAI_VISION_CAPABLE: bool = False
 
 
     # Microservice URLs
