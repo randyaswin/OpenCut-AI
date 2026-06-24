@@ -68,6 +68,7 @@ export const assetMetadata = pgTable("asset_metadata", {
 	assetId: text("asset_id").notNull().unique(), // The OPFS/Project asset ID
 	status: text("status").default("pending"), // 'pending', 'completed', 'error'
 	metadata: jsonb("metadata"), // EXIF/ffprobe data
+	normalizedUrl: text("normalized_url"), // URL to backend-normalized proxy
 	createdAt: timestamp("created_at").$defaultFn(() => new Date()).notNull(),
 	updatedAt: timestamp("updated_at").$defaultFn(() => new Date()).notNull(),
 });

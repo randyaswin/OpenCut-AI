@@ -100,42 +100,8 @@ export function MediaView() {
 					asset,
 				});
 
-				if (isProblematicFormat(asset.file)) {
-					const taskId = `norm-${mediaId}`;
-					useBackgroundTasksStore.getState().addTask({
-						id: taskId,
-						type: "normalization",
-						label: `Normalizing ${asset.name}`,
-						progress: "Starting...",
-					});
-
-					normalizeVideo(asset.file, (p) => {
-						useBackgroundTasksStore.getState().updateTask(taskId, {
-							progress: `Transcoding... ${p.toFixed(1)}%`,
-						});
-					})
-						.then((normalizedFile) => {
-							editor.media.updateMediaAsset({
-								projectId: activeProject.metadata.id,
-								id: mediaId,
-								updates: {
-									normalizedFile,
-									normalizedUrl: URL.createObjectURL(normalizedFile),
-								},
-							});
-							useBackgroundTasksStore.getState().updateTask(taskId, {
-								status: "completed",
-								progress: "Done",
-								completedAt: Date.now(),
-							});
-						})
-						.catch((err) => {
-							useBackgroundTasksStore.getState().updateTask(taskId, {
-								status: "error",
-								error: err instanceof Error ? err.message : String(err),
-							});
-						});
-				}
+				// Client-side normalization has been moved to the backend ingest pipeline.
+				// We no longer call `normalizeVideo` here.
 
 				// Start the AI ingest pipeline
 				if (asset.file.type.startsWith("video/") || asset.file.type.startsWith("audio/")) {
@@ -169,6 +135,14 @@ export function MediaView() {
 											progress: "Done",
 											completedAt: Date.now(),
 										});
+										if (status.result?.normalized_url) {
+											const pm = useProjectManager.getState();
+											pm.editor.media.updateMediaAsset({
+												projectId: pm.active!.id,
+												id: mediaId,
+												updates: { normalizedUrl: status.result.normalized_url }
+											});
+										}
 									} else if (status.status === "failed") {
 										clearInterval(pollInterval);
 										useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
