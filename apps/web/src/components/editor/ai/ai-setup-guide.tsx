@@ -82,7 +82,7 @@ function statusBadge(status: ServiceState): {
 }
 
 const SUGGESTED_MODELS = [
-	{ name: "llama3.2:1b", description: "Fastest, minimal resources", size: "~1.3 GB", device: "cpu" as const, turboquant: true },
+	{ name: "llama3.1:8b", description: "Fastest, minimal resources", size: "~1.3 GB", device: "cpu" as const, turboquant: true },
 	{ name: "kimi-k2:latest", description: "MoonshotAI Kimi K2 — frontier reasoning, 3-bit (Lite tier)", size: "~1.4 GB", device: "cpu" as const, turboquant: true },
 	{ name: "llama3.2:3b", description: "Fast, lightweight — good for commands and analysis", size: "~2 GB", device: "cpu" as const, turboquant: true },
 	{ name: "kimi-k2:q4_K_M", description: "MoonshotAI Kimi K2 — long-context agentic tasks, 4-bit (Standard tier)", size: "~3 GB", device: "cpu" as const, turboquant: true },
@@ -528,7 +528,7 @@ export function AISetupGuide({ isOpen, onOpenChange }: AISetupGuideProps) {
 											{hasModels ? "Switch to a different model" : "Choose a model to install"}
 										</span>
 										{SUGGESTED_MODELS.map((model) => {
-											// Exact match: "llama3.2:1b" must match "llama3.2:1b", not "llama3.2:3b"
+											// Exact match: "llama3.1:8b" must match "llama3.1:8b", not "llama3.2:3b"
 											const isInstalled = ollamaModels.some(
 												(m) => m.name === model.name,
 											);

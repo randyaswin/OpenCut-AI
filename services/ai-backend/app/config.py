@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # Ollama
     OLLAMA_URL: str = "http://localhost:11434"
-    OLLAMA_DEFAULT_MODEL: str = "llama3.2:1b"
+    OLLAMA_DEFAULT_MODEL: str = "llama3.1:8b"
     OLLAMA_TIMEOUT: int = 300
 
     # AI Memory Budget & Model Tiers

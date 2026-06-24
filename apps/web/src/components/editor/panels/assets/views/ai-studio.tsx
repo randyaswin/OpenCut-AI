@@ -423,7 +423,7 @@ export function AIStudioView() {
 			const detail = error instanceof Error ? error.message : "";
 			const isOllamaDown = detail.includes("503") || detail.includes("Ollama");
 			const errorContent = isOllamaDown
-				? "Ollama is not running or no LLM model is loaded. Open the AI Setup guide (click the AI indicator in the header) to pull a model like `llama3.2:1b`."
+				? "Ollama is not running or no LLM model is loaded. Open the AI Setup guide (click the AI indicator in the header) to pull a model like `llama3.1:8b`."
 				: `Something went wrong: ${detail || "Unknown error"}. Make sure the AI backend and Ollama are running with a model loaded.`;
 
 			if (!messageAdded) {
