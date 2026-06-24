@@ -74,6 +74,11 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
     if job:
         job.meta['progress'] = 'scene_description'
         job.save_meta()
+    try:
+        from app.services.scene_descriptor import generate_scene_descriptions
+        results["scenes"] = generate_scene_descriptions(file_path, interval_sec=5)
+    except Exception as e:
+        logger.error(f"Scene description failed: {e}")
 
     # 5. Send Webhook
     if job:
