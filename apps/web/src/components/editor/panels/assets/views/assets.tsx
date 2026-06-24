@@ -41,6 +41,7 @@ import {
 import { useSearchStore } from "@/stores/search-store";
 import { useBackgroundTasksStore } from "@/stores/background-tasks-store";
 import { isProblematicFormat, normalizeVideo } from "@/lib/media/ffmpeg-normalizer";
+import { aiClient } from "@/lib/ai-client";
 import type { MediaAsset } from "@/types/assets";
 import { cn } from "@/utils/ui";
 import {
@@ -129,6 +130,54 @@ export function MediaView() {
 						})
 						.catch((err) => {
 							useBackgroundTasksStore.getState().updateTask(taskId, {
+								status: "error",
+								error: err instanceof Error ? err.message : String(err),
+							});
+						});
+				}
+
+				// Start the AI ingest pipeline
+				if (asset.file.type.startsWith("video/") || asset.file.type.startsWith("audio/")) {
+					const ingestTaskId = `ingest-${mediaId}`;
+					useBackgroundTasksStore.getState().addTask({
+						id: ingestTaskId,
+						type: "ingest",
+						label: `AI Ingest: ${asset.name}`,
+						progress: "Starting...",
+					});
+
+					const webhookUrl = `${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/api/webhooks/ingest-complete`;
+					aiClient.ingestAsset(mediaId, asset.file, webhookUrl)
+						.then((res) => {
+							const jobId = res.job_id;
+							const pollInterval = setInterval(async () => {
+								try {
+									const status = await aiClient.pollIngestStatus(jobId);
+									if (status.status === "finished") {
+										clearInterval(pollInterval);
+										useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+											status: "completed",
+											progress: "Done",
+											completedAt: Date.now(),
+										});
+									} else if (status.status === "failed") {
+										clearInterval(pollInterval);
+										useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+											status: "error",
+											error: "Ingest failed",
+										});
+									} else {
+										useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+											progress: status.progress || "Processing...",
+										});
+									}
+								} catch (e) {
+									// ignore polling errors
+								}
+							}, 2000);
+						})
+						.catch((err) => {
+							useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
 								status: "error",
 								error: err instanceof Error ? err.message : String(err),
 							});
