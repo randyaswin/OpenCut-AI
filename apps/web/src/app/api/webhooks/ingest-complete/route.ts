@@ -24,10 +24,11 @@ export async function POST(req: Request) {
 				id: crypto.randomUUID(),
 				assetId: asset_id,
 				metadata: metadata,
+				status: "completed",
 			})
 			.onConflictDoUpdate({
 				target: assetMetadata.assetId,
-				set: { metadata, updatedAt: new Date() },
+				set: { metadata, status: "completed", updatedAt: new Date() },
 			});
 
 		// Insert transcript if available

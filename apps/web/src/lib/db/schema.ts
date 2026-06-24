@@ -66,6 +66,7 @@ export const verifications = pgTable("verifications", {
 export const assetMetadata = pgTable("asset_metadata", {
 	id: text("id").primaryKey(),
 	assetId: text("asset_id").notNull().unique(), // The OPFS/Project asset ID
+	status: text("status").default("pending"), // 'pending', 'completed', 'error'
 	metadata: jsonb("metadata"), // EXIF/ffprobe data
 	createdAt: timestamp("created_at").$defaultFn(() => new Date()).notNull(),
 	updatedAt: timestamp("updated_at").$defaultFn(() => new Date()).notNull(),
