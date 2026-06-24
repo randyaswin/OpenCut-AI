@@ -979,7 +979,17 @@ const API_KEY_FIELDS = [
 		description: "Name of the model to use for image generation",
 		envVar: "NEXT_PUBLIC_OPENAI_IMAGE_MODEL",
 		envValue: process.env.NEXT_PUBLIC_OPENAI_IMAGE_MODEL || process.env.OPENCUTAI_OPENAI_IMAGE_MODEL || "",
-		info: "The exact image model string to pass in the API request.",
+		info: "The OpenAI-compatible model to use for image generation (e.g., dall-e-3).",
+		required: false,
+	},
+	{
+		key: "openai_vision_capable",
+		label: "OpenAI Vision Capable",
+		placeholder: "true or false",
+		description: "Whether the selected OpenAI model supports vision/images",
+		envVar: "NEXT_PUBLIC_OPENAI_VISION_CAPABLE",
+		envValue: process.env.NEXT_PUBLIC_OPENAI_VISION_CAPABLE || "",
+		info: "Set to 'true' if the OpenAI model you specified above supports vision (e.g., gpt-4o, gpt-4-turbo). This enables AI scene description from video frames.",
 		required: false,
 	},
 	{
