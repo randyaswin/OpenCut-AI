@@ -4,3 +4,4 @@ python-multipart==0.0.9
 aiofiles==24.1.0
 torch>=2.1.0,<2.6.0
 coqui-tts==0.24.2
+torchaudio==2.5.1
