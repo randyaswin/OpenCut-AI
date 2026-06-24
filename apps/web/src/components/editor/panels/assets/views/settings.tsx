@@ -973,6 +973,16 @@ const API_KEY_FIELDS = [
 		required: false,
 	},
 	{
+		key: "openai_image_model",
+		label: "OpenAI Image Model",
+		placeholder: "dall-e-3",
+		description: "Name of the model to use for image generation",
+		envVar: "NEXT_PUBLIC_OPENAI_IMAGE_MODEL",
+		envValue: process.env.NEXT_PUBLIC_OPENAI_IMAGE_MODEL || process.env.OPENCUTAI_OPENAI_IMAGE_MODEL || "",
+		info: "The exact image model string to pass in the API request.",
+		required: false,
+	},
+	{
 		key: "sarvam",
 		label: "Sarvam AI API Key",
 		placeholder: "sk_...",
