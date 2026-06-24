@@ -106,6 +106,7 @@ export function MediaView() {
 						id: taskId,
 						type: "normalization",
 						label: `Normalizing ${asset.name}`,
+						progress: "Starting...",
 					});
 
 					normalizeVideo(asset.file, (p) => {
@@ -147,6 +148,14 @@ export function MediaView() {
 					});
 
 					const webhookUrl = `${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/api/webhooks/ingest-complete`;
+					
+					// Mark as pending in DB
+					fetch(`/api/assets/${mediaId}/metadata`, {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ status: "pending" }),
+					}).catch(console.error);
+
 					aiClient.ingestAsset(mediaId, asset.file, webhookUrl)
 						.then((res) => {
 							const jobId = res.job_id;

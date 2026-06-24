@@ -30,6 +30,8 @@ import {
 import { DEFAULT_TIMELINE_VIEW_STATE } from "@/constants/timeline-constants";
 import { loadFonts } from "@/lib/fonts/google-fonts";
 import { collectFontFamilies } from "@/lib/timeline/element-utils";
+import { useTranscriptStore } from "@/stores/transcript-store";
+import { useBackgroundTasksStore } from "@/stores/background-tasks-store";
 
 export interface MigrationState {
 	isMigrating: boolean;
@@ -154,6 +156,38 @@ export class ProjectManager {
 			}
 
 			await this.editor.media.loadProjectMedia({ projectId: id });
+
+			// Fetch metadata for all loaded assets
+			const assets = this.editor.media.getAssets();
+			for (const asset of assets) {
+				try {
+					const res = await fetch(`/api/assets/${asset.id}/metadata`);
+					if (res.ok) {
+						const data = await res.json();
+						if (data) {
+							// Populate transcript store if available
+							if (data.transcripts && data.transcripts.length > 0) {
+								const transcriptData = data.transcripts[0];
+								if (transcriptData && transcriptData.segments) {
+									useTranscriptStore.getState().setSegments(transcriptData.segments as any);
+								}
+							}
+							
+							// Check ingest status
+							if (data.status === "pending" || data.status === "processing") {
+								useBackgroundTasksStore.getState().addTask({
+									id: `ingest-${asset.id}`,
+									type: "ingest",
+									label: `AI Ingest: ${asset.name}`,
+									progress: "Processing...",
+								});
+							}
+						}
+					}
+				} catch (e) {
+					console.error("Failed to load metadata for asset", asset.id, e);
+				}
+			}
 
 			const allTracks = (project.scenes ?? []).flatMap((scene) => scene.tracks);
 			await loadFonts({ families: collectFontFamilies({ tracks: allTracks }) });
