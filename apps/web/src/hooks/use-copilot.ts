@@ -153,7 +153,7 @@ export function useCopilot() {
 
 			try {
 				if (step.action) {
-					executeAction(step.action);
+					await executeAction(step.action);
 				}
 
 				setPlan((prev) => {
