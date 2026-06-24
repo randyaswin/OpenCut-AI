@@ -480,6 +480,28 @@ class AIClient {
 		return this.request<AIBackendStatus>("/health", {}, HEALTH_TIMEOUT_MS);
 	}
 
+	async ingestAsset(
+		assetId: string,
+		file: File,
+		webhookUrl: string,
+	): Promise<{ job_id: string }> {
+		const formData = new FormData();
+		formData.append("asset_id", assetId);
+		formData.append("webhook_url", webhookUrl);
+		formData.append("file", file);
+
+		return this.requestFormData<{ job_id: string }>(
+			"/api/ingest",
+			formData,
+		);
+	}
+
+	async pollIngestStatus(jobId: string): Promise<any> {
+		return this.request<any>(`/api/ingest/${jobId}`, {
+			method: "GET",
+		});
+	}
+
 	async transcribe(
 		file: File,
 		language?: string,
