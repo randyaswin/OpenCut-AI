@@ -73,6 +73,7 @@ services:
     environment:
       - OPENCUTAI_OLLAMA_URL=http://ollama:11434
       - OPENCUTAI_PORT=8420
+      - OPENCUTAI_REDIS_URL=redis://redis:6379
       - OPENCUTAI_CORS_ORIGINS=["http://localhost:3000","http://localhost:3100","http://localhost:5173"]
       # LLM model for Ollama. Kimi K2 options:
       #   kimi-k2:latest (Q3, ~1.4GB), kimi-k2:q4_K_M (Q4, ~3GB), kimi-k2:q5_K_M (Q5, ~7GB)
