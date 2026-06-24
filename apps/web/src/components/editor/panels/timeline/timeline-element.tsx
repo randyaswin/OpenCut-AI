@@ -796,9 +796,9 @@ const ELEMENT_CONTENT_RENDERERS: Record<
 		>;
 		const audioBuffer =
 			audioElement.sourceType === "library" ? audioElement.buffer : undefined;
-		const mediaAsset = mediaAssets.find(
+		const mediaAsset = "mediaId" in audioElement ? mediaAssets.find(
 			(asset) => asset.id === audioElement.mediaId,
-		);
+		) : undefined;
 		const audioUrl =
 			audioElement.sourceType === "library"
 				? audioElement.sourceUrl

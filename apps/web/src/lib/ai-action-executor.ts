@@ -1,5 +1,6 @@
 import type { EditorAction, EditorActionType } from "@/types/ai";
 import { useTranscriptStore } from "@/stores/transcript-store";
+import { aiClient } from "@/lib/ai-client";
 
 function getTranscriptStore() {
 	return useTranscriptStore.getState();
@@ -453,7 +454,7 @@ export async function executeAction(action: EditorAction): Promise<void> {
 				const text = action.params.text as string;
 				if (!text) break;
 				
-				const blob = await aiClient.generateSpeechBlob({ text, voice: "default" });
+				const blob = await aiClient.generateSpeechBlob({ text, language: "en", speaker: "default" });
 				const editor = getEditorCore();
 				const trackId = editor.timeline.addTrack({ type: "audio" });
 				const projectId = editor.project.getActive().id;
