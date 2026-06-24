@@ -19,6 +19,10 @@ yt-dlp>=2024.01.01
 
 # Job queue (Redis, optional — falls back to in-memory)
 redis>=5.0.0
+rq>=1.16.0
+
+# Computer Vision / Object Detection
+ultralytics>=8.2.0
 
 # Audio Intelligence (optional — falls back to FFmpeg-based analysis)
 # beatnet>=1.0.0   # Uncomment for BeatNet beat detection (MIT license)

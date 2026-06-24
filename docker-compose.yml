@@ -103,8 +103,11 @@ services:
     volumes:
       - ai_models:/app/models
       - ai_generated:/app/generated
+      - ai_ingest_data:/app/ingest_data
     depends_on:
       ollama:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8420/health || exit 1"]
@@ -112,6 +115,28 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  ai-worker:
+    build:
+      context: ./services/ai-backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["rq", "worker", "ingest", "--url", "redis://redis:6379", "--with-scheduler"]
+    environment:
+      - OPENCUTAI_OLLAMA_URL=http://ollama:11434
+      - OPENCUTAI_WHISPER_SERVICE_URL=http://whisper-service:8421
+      - OPENCUTAI_CLIP_SERVICE_URL=http://clip-service:8426
+      - OPENCUTAI_FACE_SERVICE_URL=http://face-service:8425
+      - OPENCUTAI_OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENCUTAI_OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - OPENCUTAI_OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - NEXT_PUBLIC_SITE_URL=http://web:3000
+    volumes:
+      - ai_models:/app/models
+      - ai_ingest_data:/app/ingest_data
+    depends_on:
+      redis:
+        condition: service_healthy
 
   whisper-service:
     build:
@@ -332,6 +357,7 @@ volumes:
   turboquant_models:
   image_generated:
   clip_models:
+  ai_ingest_data:
 
 networks:
   default:
