@@ -43,6 +43,7 @@ class FaceReframer:
         target_height: int = 1920,
         sample_interval: float = 0.5,
         max_samples: int = 240,
+        target_subject: str = None,
     ) -> list[CropRegion]:
         """Compute crop positions for each sampled frame.
 
@@ -56,15 +57,20 @@ class FaceReframer:
 
         target_ratio = target_width / target_height
 
-        # Detect faces
-        face_frames = await self._detect_faces(video_path, sample_interval, max_samples)
+        # Detect subjects (faces or objects)
+        if target_subject and target_subject.lower() not in ["face", "person"]:
+            # Object tracking using YOLO
+            target_frames = await self._detect_objects(video_path, sample_interval, max_samples, target_subject)
+        else:
+            # Face tracking using Face Service
+            target_frames = await self._detect_faces(video_path, sample_interval, max_samples)
 
-        if not face_frames:
-            # No face service — center crop
+        if not target_frames:
+            # No face/object service or nothing found — center crop
             return self._center_crop_trajectory(src_w, src_h, target_ratio, 0, sample_interval, max_samples)
 
         regions = []
-        for frame in face_frames:
+        for frame in target_frames:
             timestamp = frame.get("timestamp", 0)
             faces = frame.get("faces", [])
 
@@ -141,6 +147,80 @@ class FaceReframer:
         except (httpx.ConnectError, httpx.TimeoutException):
             logger.debug("Face service not available for reframe")
         return []
+
+    async def _detect_objects(self, video_path: str, interval: float, max_samples: int, target_subject: str = None) -> list[dict]:
+        """Run YOLO object detection to find the target subject."""
+        import asyncio
+        import math
+        
+        def run_yolo():
+            from ultralytics import YOLO
+            model = YOLO("yolov8n.pt")
+            
+            # Estimate fps to determine vid_stride
+            fps = 30 # default
+            try:
+                import subprocess, json
+                cmd = ["ffprobe", "-v", "quiet", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate", "-of", "json", video_path]
+                res = subprocess.run(cmd, capture_output=True, text=True)
+                fps_str = json.loads(res.stdout)["streams"][0]["r_frame_rate"]
+                n, d = map(int, fps_str.split('/'))
+                fps = n / d if d != 0 else 30
+            except:
+                pass
+            
+            vid_stride = max(1, int(fps * interval))
+            
+            frames = []
+            for i, res in enumerate(model(video_path, stream=True, vid_stride=vid_stride, verbose=False)):
+                if i >= max_samples:
+                    break
+                    
+                timestamp = i * (vid_stride / fps)
+                objects = []
+                
+                boxes = res.boxes
+                if boxes is not None and len(boxes) > 0:
+                    for j in range(len(boxes)):
+                        cls_id = int(boxes.cls[j].item())
+                        cls_name = model.names[cls_id].lower()
+                        
+                        # If target_subject is specified, only include matching objects
+                        if target_subject and target_subject.lower() not in cls_name:
+                            continue
+                            
+                        # Get normalized coordinates
+                        x_center, y_center, w, h = boxes.xywhn[j].tolist()
+                        conf = boxes.conf[j].item()
+                        
+                        objects.append({
+                            "x": x_center - w / 2,
+                            "y": y_center - h / 2,
+                            "w": w,
+                            "h": h,
+                            "conf": conf,
+                            "label": cls_name
+                        })
+                
+                # If no target specified, pick largest high-confidence object
+                if not target_subject and objects:
+                    # Filter for conf > 0.5
+                    confident_objects = [o for o in objects if o["conf"] > 0.5]
+                    if confident_objects:
+                        # Sort by area
+                        confident_objects.sort(key=lambda o: o["w"] * o["h"], reverse=True)
+                        objects = [confident_objects[0]]
+                    else:
+                        objects = []
+                        
+                frames.append({
+                    "timestamp": timestamp,
+                    "faces": objects # reusing 'faces' key for compatibility with existing logic
+                })
+            return frames
+            
+        return await asyncio.to_thread(run_yolo)
+
 
     def _compute_center_crop(self, src_w: int, src_h: int, target_ratio: float) -> dict:
         """Simple center crop for target aspect ratio."""

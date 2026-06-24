@@ -97,6 +97,7 @@ Non-Destructive Action Types (AUTO-EXECUTE):
 - NORMALIZE_AUDIO
 - AUTO_DUCK
 - COLOR_CORRECT
+- AUTO_REFRAME
 
 Return a JSON object with this EXACT structure:
 {
@@ -136,5 +137,6 @@ Available Action Types and Params:
 - AUTO_DUCK: { duckAmount: number, fadeDuration: number }
 - EXPORT_PROJECT: { format: string, quality: string }
 - COLOR_CORRECT: { profile: string }
+- AUTO_REFRAME: { targetRatio: string, subject?: string }
 
 Only use action types from the list above. Be highly specific with params.`;

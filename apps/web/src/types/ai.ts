@@ -59,6 +59,7 @@ export type EditorActionType =
 	| "NORMALIZE_AUDIO"
 	| "AUTO_DUCK"
 	| "COLOR_CORRECT"
+	| "AUTO_REFRAME"
 	| "EXPORT_PROJECT";
 
 export interface EditorAction {

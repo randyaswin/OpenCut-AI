@@ -38,6 +38,7 @@ Available action types:
 - NORMALIZE_AUDIO: { targetLUFS: number }
 - AUTO_DUCK: { duckAmount: number, fadeDuration: number }
 - EXPORT_PROJECT: { format: string, quality: string }
+- AUTO_REFRAME: { targetRatio: string, subject?: string }
 - COLOR_CORRECT: { profile: string }
 
 Respond with ONLY a JSON object in this format:

@@ -118,8 +118,43 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
         job.save_meta()
     try:
         from ultralytics import YOLO
-        model = YOLO("yolov8n.pt") 
-        # results["objects"] = ...
+        import math
+        
+        # Load model (downloads on first run if not present)
+        model = YOLO("yolov8n.pt")
+        
+        # Determine stride (e.g. 1 frame every 1 second)
+        # Using 30 as a safe default for ~30fps video if metadata fails
+        try:
+            fps_str = results["metadata"]["streams"][0].get("r_frame_rate", "30/1")
+            num, den = map(int, fps_str.split('/'))
+            fps = num / den if den != 0 else 30
+        except:
+            fps = 30
+            
+        vid_stride = max(1, math.floor(fps))  # 1 frame per second
+        
+        # Run inference on video
+        detection_results = []
+        # stream=True returns a generator, keeping memory low
+        for i, res in enumerate(model(file_path, stream=True, vid_stride=vid_stride, verbose=False)):
+            timestamp = i * (vid_stride / fps)
+            
+            # Extract unique classes found in this frame
+            boxes = res.boxes
+            if boxes is not None and len(boxes) > 0:
+                class_ids = boxes.cls.int().tolist()
+                class_names = [model.names[cid] for cid in class_ids]
+                unique_classes = list(set(class_names))
+                
+                # Store frame level summary
+                detection_results.append({
+                    "timestamp": timestamp,
+                    "classes": unique_classes
+                })
+        
+        results["objects"] = detection_results
+        logger.info(f"Object detection completed: {len(detection_results)} frames with objects.")
     except Exception as e:
         logger.error(f"Object detection failed: {e}")
 

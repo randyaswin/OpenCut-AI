@@ -81,6 +81,8 @@ export function previewAction(action: EditorAction): string {
 			return `Auto-duck music under speech (${action.params.duckAmount ?? -12}dB)`;
 		case "COLOR_CORRECT":
 			return `Apply "${action.params.profile ?? "auto"}" color correction`;
+		case "AUTO_REFRAME":
+			return `Auto-reframe to ${action.params.targetRatio ?? "9:16"}${action.params.subject ? ` following "${action.params.subject}"` : ""}`;
 		default:
 			return action.description;
 	}
@@ -573,6 +575,50 @@ export async function executeAction(action: EditorAction): Promise<void> {
 				await editor.renderer.exportProject({ options: { format: "mp4", quality: "high", fps: 30, includeAudio: true, includeWatermark: false } });
 			} catch (e) {
 				console.error(e);
+			}
+			break;
+		}
+
+		case "AUTO_REFRAME": {
+			try {
+				const editor = getEditorCore();
+				const targetRatioStr = (action.params.targetRatio as string) ?? "9:16";
+				const [wStr, hStr] = targetRatioStr.split(":");
+				const tw = parseInt(wStr) || 9;
+				const th = parseInt(hStr) || 16;
+				
+				const subject = action.params.subject as string | undefined;
+
+				const tracks = editor.timeline.getTracks();
+				for (const track of tracks) {
+					for (const el of track.elements) {
+						if (el.type === "video") {
+							const media = editor.media.getAssetById(el.mediaId);
+							if (media?.file) {
+								const { computeReframeKeyframes, getDefaultReframeOptions } = await import("@/lib/reframe/reframe-types");
+								const detection = await aiClient.detectFaces(media.file, { sampleInterval: 0.5, subject });
+								
+								const opts = {
+									...getDefaultReframeOptions(),
+									targetWidth: tw * 100, // proportional width
+									targetHeight: th * 100, // proportional height
+								};
+								
+								const keyframes = computeReframeKeyframes(detection, opts);
+								
+								const animations = { ...(el.animations || {}) };
+								const channels = { ...(animations.channels || {}) };
+								channels.transformX = keyframes.x;
+								channels.transformY = keyframes.y;
+								animations.channels = channels;
+								
+								editor.timeline.updateElement(el.id, { animations });
+							}
+						}
+					}
+				}
+			} catch (e) {
+				console.error("[ai-action-executor] AUTO_REFRAME failed:", e);
 			}
 			break;
 		}

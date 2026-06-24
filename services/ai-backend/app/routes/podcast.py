@@ -506,17 +506,21 @@ async def analyze_faces(
     file: UploadFile = File(...),
     sample_interval: float = Form(default=1.0),
     max_samples: int = Form(default=120),
+    subject: str = Form(default=None),
 ) -> dict[str, Any]:
-    """Detect faces in a video file for auto-reframe.
+    """Detect faces or objects in a video file for auto-reframe.
 
-    Proxies the video to the face-service microservice which runs
-    MediaPipe face detection on sampled frames.
-
-    Returns face bounding boxes (normalized 0-1) per sampled frame.
+    If subject is not "face" or "person", it runs YOLO object detection.
+    Otherwise, proxies to the face-service microservice.
     """
     upload_path, ext = await _save_upload_file(file, "face")
 
     try:
+        if subject and subject.lower() not in ["face", "person"]:
+            from app.services.face_reframe import face_reframer
+            frames = await face_reframer._detect_objects(upload_path, sample_interval, max_samples, subject)
+            return {"frames": frames}
+
         try:
             async with httpx.AsyncClient(timeout=300) as client:
                 with open(upload_path, "rb") as f:

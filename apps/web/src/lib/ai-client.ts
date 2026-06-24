@@ -1244,12 +1244,13 @@ class AIClient {
 
 	async detectFaces(
 		file: File,
-		options?: { sampleInterval?: number; maxSamples?: number },
+		options?: { sampleInterval?: number; maxSamples?: number; subject?: string },
 	): Promise<FaceDetectionResult> {
 		const formData = new FormData();
 		formData.append("file", file);
 		if (options?.sampleInterval !== undefined) formData.append("sample_interval", options.sampleInterval.toString());
 		if (options?.maxSamples !== undefined) formData.append("max_samples", options.maxSamples.toString());
+		if (options?.subject !== undefined) formData.append("subject", options.subject);
 
 		return this.requestFormData<FaceDetectionResult>(
 			"/api/analyze/faces",
