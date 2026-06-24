@@ -34,7 +34,7 @@ Available action types:
 - DENOISE_AUDIO: { strength: number }
 - GENERATE_IMAGE: { prompt: string, width: number, height: number }
 - SET_CANVAS_SIZE: { width: number, height: number, label: string }
-- ADD_MUSIC: { genre: string, mood: string, tempo: string, duration: number }
+- ADD_MUSIC: { query: string, duration: number } // query should be keywords based on video mood/sentiment
 - NORMALIZE_AUDIO: { targetLUFS: number }
 - AUTO_DUCK: { duckAmount: number, fadeDuration: number }
 - EXPORT_PROJECT: { format: string, quality: string }

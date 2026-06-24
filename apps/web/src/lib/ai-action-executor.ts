@@ -74,7 +74,7 @@ export function previewAction(action: EditorAction): string {
 		case "SET_CANVAS_SIZE":
 			return `Set canvas to ${action.params.label ?? `${action.params.width}x${action.params.height}`}`;
 		case "ADD_MUSIC":
-			return `Add ${action.params.genre ?? ""} music (${action.params.mood ?? ""}, ${action.params.duration ?? 30}s)`;
+			return `Add background music: "${action.params.query ?? "auto"}" (${action.params.duration ?? 30}s)`;
 		case "NORMALIZE_AUDIO":
 			return `Normalize audio to ${action.params.targetLUFS ?? -14} LUFS`;
 		case "AUTO_DUCK":
@@ -522,7 +522,48 @@ export async function executeAction(action: EditorAction): Promise<void> {
 		}
 
 		case "ADD_MUSIC": {
-			console.warn("[ai-action-executor] ADD_MUSIC relies on external APIs (e.g. Freesound) - unimplemented stub.");
+			try {
+				const editor = getEditorCore();
+				const projectId = editor.project.getActive().id;
+				const query = action.params.query as string || `${action.params.genre || ""} ${action.params.mood || ""}`.trim() || "background music";
+
+				const res = await fetch(`/api/sounds/search?q=${encodeURIComponent(query)}&type=songs`);
+				if (!res.ok) throw new Error("Failed to search Freesound");
+				
+				const data = await res.json();
+				if (data.results && data.results.length > 0) {
+					const sound = data.results[0];
+					const previewUrl = sound.previewUrl;
+					
+					if (previewUrl) {
+						const audioRes = await fetch(previewUrl);
+						const blob = await audioRes.blob();
+						const file = new File([blob], "music.mp3", { type: audioRes.headers.get("content-type") || "audio/mpeg" });
+						
+						const mediaId = await editor.media.addMediaAsset({ projectId, asset: { type: "audio", file, url: URL.createObjectURL(file), name: sound.name, duration: sound.duration || action.params.duration || 30 } as any });
+						const trackId = editor.timeline.addTrack({ type: "audio" });
+						
+						editor.timeline.insertElement({
+							element: {
+								type: "audio",
+								sourceType: "upload",
+								mediaId,
+								name: sound.name,
+								startTime: 0,
+								duration: sound.duration || action.params.duration || 30,
+								trimStart: 0,
+								trimEnd: 0,
+								volume: 0.5,
+							} as any,
+							placement: { mode: "explicit" as const, trackId, startTime: 0 },
+						});
+						break;
+					}
+				}
+				console.warn("[ai-action-executor] Freesound returned no results or missing preview URL.");
+			} catch (e) {
+				console.error("[ai-action-executor] Failed to add music:", e);
+			}
 			break;
 		}
 
