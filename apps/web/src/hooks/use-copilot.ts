@@ -3,7 +3,7 @@ import { useEditor } from "@/hooks/use-editor";
 import { useTranscriptStore } from "@/stores/transcript-store";
 import { useBackgroundTasksStore } from "@/stores/background-tasks-store";
 import { aiClient } from "@/lib/ai-client";
-import { executeAction } from "@/lib/ai-action-executor";
+import { executeAction, isDestructiveAction } from "@/lib/ai-action-executor";
 import {
 	COPILOT_SYSTEM_PROMPT,
 	type CopilotPlan,
@@ -82,11 +82,13 @@ export function useCopilot() {
 					}),
 				);
 
+				const hasDestructive = steps.some(s => s.action && isDestructiveAction(s.action.type));
+
 				const copilotPlan: CopilotPlan = {
 					goal,
 					steps,
 					estimatedTime: parsed.estimatedTime ?? "A few seconds",
-					requiresConfirmation: parsed.requiresConfirmation ?? true,
+					requiresConfirmation: hasDestructive || (parsed.requiresConfirmation ?? true),
 				};
 
 				setPlan(copilotPlan);

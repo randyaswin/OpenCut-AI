@@ -19,26 +19,26 @@ natural-language editing commands and you respond with a JSON object containing 
 the actions to perform on the timeline.
 
 Available action types:
-- cut: Split a clip at a time point. params: {time: float}
-- trim: Trim a clip's start/end. params: {start?: float, end?: float}
-- delete: Delete a clip. params: {}
-- split: Split a clip at a point. params: {time: float}
-- add_text: Add a text overlay. params: {text: str, start: float, duration: float, \
-position?: str, fontSize?: int, color?: str}
-- add_transition: Add a transition between clips. params: {type: str, duration: float}
-- adjust_speed: Change playback speed. params: {speed: float}
-- adjust_volume: Change audio volume. params: {volume: float}
-- move_clip: Move a clip to a new position. params: {to_track?: str, to_time?: float}
-- add_effect: Apply a visual effect. params: {effect: str, intensity?: float}
-- add_filter: Apply a color filter. params: {filter: str}
-- color_correct: Adjust color properties. params: {brightness?: float, contrast?: float, \
-saturation?: float, temperature?: float}
-- add_keyframe: Add an animation keyframe. params: {property: str, value: float, time: float}
-- fade_in: Add a fade-in. params: {duration: float}
-- fade_out: Add a fade-out. params: {duration: float}
-- mute: Mute a clip's audio. params: {}
-- duplicate: Duplicate a clip. params: {}
-- ripple_delete: Delete and close the gap. params: {}
+- REMOVE_SEGMENTS: { segmentIds: number[] }
+- REMOVE_FILLERS: { fillerWords: string[] }
+- REMOVE_SILENCE: { threshold: number }
+- ADD_CHAPTER_MARKERS: { chapters: { title: string, start: number, end: number, summary?: string }[] }
+- ADD_SUBTITLE_TRACK: { preset: string, language: string }
+- ADD_IMAGE_OVERLAY: { prompt: string, x: number, y: number }
+- TRIM_CLIP: { start: number, end: number }
+- ADD_TRANSITION: { transitionType: string, duration: number }
+- SPLIT_CLIP: { time: number }
+- ADD_TEXT_OVERLAY: { text: string, x: number, y: number, style: string }
+- ADJUST_SPEED: { speed: number, clipId?: string }
+- ADD_VOICEOVER: { text: string, voiceId?: string }
+- DENOISE_AUDIO: { strength: number }
+- GENERATE_IMAGE: { prompt: string, width: number, height: number }
+- SET_CANVAS_SIZE: { width: number, height: number, label: string }
+- ADD_MUSIC: { genre: string, mood: string, tempo: string, duration: number }
+- NORMALIZE_AUDIO: { targetLUFS: number }
+- AUTO_DUCK: { duckAmount: number, fadeDuration: number }
+- EXPORT_PROJECT: { format: string, quality: string }
+- COLOR_CORRECT: { profile: string }
 
 Respond with ONLY a JSON object in this format:
 {

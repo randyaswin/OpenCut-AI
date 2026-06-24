@@ -10,6 +10,18 @@ function getEditorCore() {
 	return EditorCore.getInstance();
 }
 
+export function isDestructiveAction(type: EditorActionType): boolean {
+	const destructiveTypes: EditorActionType[] = [
+		"REMOVE_SEGMENTS",
+		"REMOVE_FILLERS",
+		"REMOVE_SILENCE",
+		"TRIM_CLIP",
+		"SPLIT_CLIP",
+		"EXPORT_PROJECT"
+	];
+	return destructiveTypes.includes(type);
+}
+
 export function previewAction(action: EditorAction): string {
 	switch (action.type) {
 		case "REMOVE_SEGMENTS": {
