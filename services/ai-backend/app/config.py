@@ -29,12 +29,18 @@ class Settings(BaseSettings):
     # AI Memory Budget & Model Tiers
     AI_MEMORY_BUDGET: str = "auto"  # "auto", "4GB", "8GB", "16GB", "32GB"
     AI_MODEL_TIER: str = "auto"  # "lite", "standard", "pro", "auto"
-    AI_LLM_BACKEND: str = "auto"  # "ollama", "turboquant", "auto" (TQ with KV-cache optimization when available, else Ollama)
+    AI_LLM_BACKEND: str = "auto"  # "ollama", "turboquant", "openai", "auto" (TQ -> OpenAI -> Ollama)
     KV_CACHE_BITS: int = 2  # 2, 3, or 4 — TurboQuant KV cache quantization bits (2 = most memory efficient, default)
     # Compute mode for the TurboQuant inference service.
     # "auto" = detect CUDA → MPS → CPU; "cuda" = force GPU; "cpu" = force CPU.
     # Propagated to turboquant-service as its DEVICE env var.
     AI_COMPUTE_MODE: str = "auto"
+
+    # OpenAI-Compatible Backend
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_MODEL: str = "gpt-4o"
+
 
     # Microservice URLs
     WHISPER_SERVICE_URL: str = "http://localhost:8421"

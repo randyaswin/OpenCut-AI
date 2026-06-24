@@ -97,6 +97,9 @@ services:
       - OPENCUTAI_REPLICATE_API_TOKEN=${REPLICATE_API_TOKEN:-}
       - OPENCUTAI_STABILITY_API_KEY=${STABILITY_API_KEY:-}
       - OPENCUTAI_LUMA_API_KEY=${LUMA_API_KEY:-}
+      - OPENCUTAI_OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENCUTAI_OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - OPENCUTAI_OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
     volumes:
       - ai_models:/app/models
       - ai_generated:/app/generated
@@ -272,6 +275,9 @@ services:
         - NEXT_PUBLIC_REPLICATE_API_TOKEN=${REPLICATE_API_TOKEN}
         - NEXT_PUBLIC_STABILITY_API_KEY=${STABILITY_API_KEY}
         - NEXT_PUBLIC_LUMA_API_KEY=${LUMA_API_KEY}
+        - NEXT_PUBLIC_OPENAI_API_KEY=${OPENAI_API_KEY}
+        - NEXT_PUBLIC_OPENAI_BASE_URL=${OPENAI_BASE_URL}
+        - NEXT_PUBLIC_OPENAI_MODEL=${OPENAI_MODEL}
     restart: unless-stopped
     ports:
       - "3100:3000"
@@ -296,6 +302,9 @@ services:
       - NEXT_PUBLIC_WHISPER_SERVICE_URL=http://localhost:8421
       - NEXT_PUBLIC_TTS_SERVICE_URL=http://localhost:8422
       - NEXT_PUBLIC_IMAGE_SERVICE_URL=http://localhost:8423
+      - NEXT_PUBLIC_OPENAI_API_KEY=${OPENAI_API_KEY}
+      - NEXT_PUBLIC_OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - NEXT_PUBLIC_OPENAI_MODEL=${OPENAI_MODEL}
     depends_on:
       db:
         condition: service_healthy
