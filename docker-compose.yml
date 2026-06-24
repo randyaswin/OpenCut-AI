@@ -100,6 +100,7 @@ services:
       - OPENCUTAI_OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENCUTAI_OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
       - OPENCUTAI_OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - OPENCUTAI_OPENAI_IMAGE_MODEL=${OPENAI_IMAGE_MODEL:-dall-e-3}
     volumes:
       - ai_models:/app/models
       - ai_generated:/app/generated
@@ -130,6 +131,7 @@ services:
       - OPENCUTAI_OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENCUTAI_OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
       - OPENCUTAI_OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - OPENCUTAI_OPENAI_IMAGE_MODEL=${OPENAI_IMAGE_MODEL:-dall-e-3}
       - NEXT_PUBLIC_SITE_URL=http://web:3000
     volumes:
       - ai_models:/app/models
@@ -303,6 +305,7 @@ services:
         - NEXT_PUBLIC_OPENAI_API_KEY=${OPENAI_API_KEY}
         - NEXT_PUBLIC_OPENAI_BASE_URL=${OPENAI_BASE_URL}
         - NEXT_PUBLIC_OPENAI_MODEL=${OPENAI_MODEL}
+        - NEXT_PUBLIC_OPENAI_IMAGE_MODEL=${OPENAI_IMAGE_MODEL}
     restart: unless-stopped
     ports:
       - "3100:3000"
@@ -330,6 +333,7 @@ services:
       - NEXT_PUBLIC_OPENAI_API_KEY=${OPENAI_API_KEY}
       - NEXT_PUBLIC_OPENAI_BASE_URL=${OPENAI_BASE_URL}
       - NEXT_PUBLIC_OPENAI_MODEL=${OPENAI_MODEL}
+      - NEXT_PUBLIC_OPENAI_IMAGE_MODEL=${OPENAI_IMAGE_MODEL}
     depends_on:
       db:
         condition: service_healthy
