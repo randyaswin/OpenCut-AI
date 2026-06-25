@@ -144,5 +144,6 @@ Available Action Types and Params:
 - EXPORT_PROJECT: { format: string, quality: string }
 - COLOR_CORRECT: { profile: string }
 - AUTO_REFRAME: { targetRatio: string, subject?: string }
+- ADD_MEDIA_TO_TIMELINE: { assetId: string }
 
 Only use action types from the list above. Be highly specific with params.`;

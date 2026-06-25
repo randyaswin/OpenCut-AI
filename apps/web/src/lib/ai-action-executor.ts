@@ -83,6 +83,8 @@ export function previewAction(action: EditorAction): string {
 			return `Apply "${action.params.profile ?? "auto"}" color correction`;
 		case "AUTO_REFRAME":
 			return `Auto-reframe to ${action.params.targetRatio ?? "9:16"}${action.params.subject ? ` following "${action.params.subject}"` : ""}`;
+		case "ADD_MEDIA_TO_TIMELINE":
+			return `Add asset to timeline`;
 		default:
 			return action.description;
 	}
@@ -148,6 +150,63 @@ export async function executeAction(action: EditorAction): Promise<void> {
 			if (chapters) {
 				store.setChapters(chapters);
 			}
+			break;
+		}
+
+		case "ADD_MEDIA_TO_TIMELINE": {
+			const assetId = action.params.assetId as string;
+			if (!assetId) break;
+			
+			const editor = getEditorCore();
+			const asset = editor.media.getAssetById(assetId);
+			if (!asset) {
+				console.warn(`Asset ${assetId} not found`);
+				break;
+			}
+			
+			let trackId = action.params.trackId as string | undefined;
+			let startTime = action.params.startTime as number | undefined;
+			
+			if (!trackId) {
+				const tracks = editor.timeline.getTracks();
+				const targetTrack = tracks.find((t: any) => t.type === asset.type) || tracks[0];
+				if (targetTrack) {
+					trackId = targetTrack.id;
+				} else {
+					trackId = editor.timeline.addTrack({ type: asset.type });
+				}
+			}
+			
+			if (startTime === undefined) {
+				const tracks = editor.timeline.getTracks();
+				const track = tracks.find((t: any) => t.id === trackId);
+				if (track && track.elements.length > 0) {
+					startTime = Math.max(...track.elements.map((e: any) => e.startTime + e.duration));
+				} else {
+					startTime = 0;
+				}
+			}
+			
+			const { generateUUID } = require("@/utils/id");
+			const elementId = generateUUID();
+			
+			const element = {
+				id: elementId,
+				type: asset.type,
+				name: asset.name,
+				startTime,
+				duration: asset.duration || 5,
+				trackId,
+				mediaId: asset.id,
+				trimStart: 0,
+				trimEnd: asset.duration || 5,
+				opacity: 100,
+				transform: { x: 0, y: 0, scale: 1, rotation: 0 },
+				animations: [],
+				effects: [],
+			};
+			
+			editor.timeline.insertElement({ element, placement: { trackId, time: startTime } });
 			break;
 		}
 

@@ -60,7 +60,8 @@ export type EditorActionType =
 	| "AUTO_DUCK"
 	| "COLOR_CORRECT"
 	| "AUTO_REFRAME"
-	| "EXPORT_PROJECT";
+	| "EXPORT_PROJECT"
+	| "ADD_MEDIA_TO_TIMELINE";
 
 export interface EditorAction {
 	type: EditorActionType;
