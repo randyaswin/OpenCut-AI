@@ -128,6 +128,70 @@ export function MediaView() {
 							const pollInterval = setInterval(async () => {
 								try {
 									const status = await aiClient.pollIngestStatus(jobId);
+
+									// Fetch metadata to check if normalization completed early
+									try {
+										const metadataRes = await fetch(`/api/assets/${mediaId}/metadata`);
+										if (metadataRes.ok) {
+											const data = await metadataRes.json();
+											if (data) {
+												const currentAssets = editor.media.getAssets();
+												const currentAsset = currentAssets.find((a) => a.id === mediaId);
+												
+												if (currentAsset) {
+													const updates: any = {};
+													let shouldUpdate = false;
+
+													if (data.normalizedUrl && data.normalizedUrl !== currentAsset.normalizedUrl) {
+														updates.normalizedUrl = data.normalizedUrl;
+														shouldUpdate = true;
+													}
+													if (data.thumbnailUrl && data.thumbnailUrl !== currentAsset.thumbnailUrl) {
+														updates.thumbnailUrl = data.thumbnailUrl;
+														shouldUpdate = true;
+													}
+													// If dimensions/fps/duration are not set locally but available in metadata, update them
+													if (data.metadata) {
+														const format = data.metadata.format || {};
+														const videoStream = (data.metadata.streams || []).find((s: any) => s.codec_type === 'video');
+														
+														if (format.duration && currentAsset.duration === undefined) {
+															updates.duration = parseFloat(format.duration);
+															shouldUpdate = true;
+														}
+														if (videoStream) {
+															if (videoStream.width && currentAsset.width === undefined) {
+																updates.width = parseInt(videoStream.width);
+																shouldUpdate = true;
+															}
+															if (videoStream.height && currentAsset.height === undefined) {
+																updates.height = parseInt(videoStream.height);
+																shouldUpdate = true;
+															}
+															if (videoStream.r_frame_rate && currentAsset.fps === undefined) {
+																const [num, den] = videoStream.r_frame_rate.split('/').map(Number);
+																if (den) {
+																	updates.fps = Math.round(num / den);
+																	shouldUpdate = true;
+																}
+															}
+														}
+													}
+
+													if (shouldUpdate) {
+														editor.media.updateMediaAsset({
+															projectId: activeProject.metadata.id,
+															id: mediaId,
+															updates,
+														});
+													}
+												}
+											}
+										}
+									} catch (err) {
+										console.error("Failed to fetch full asset metadata during ingest polling", err);
+									}
+
 									if (status.status === "finished") {
 										clearInterval(pollInterval);
 										useBackgroundTasksStore.getState().updateTask(ingestTaskId, {

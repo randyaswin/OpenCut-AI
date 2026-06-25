@@ -134,6 +134,31 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
         except Exception as e:
             logger.error(f"Thumbnail extraction failed: {e}")
 
+    # 0.6. Send early webhook notification for normalization & thumbnail
+    try:
+        resolved_webhook_url = webhook_url
+        if "localhost:3100" in webhook_url:
+            resolved_webhook_url = webhook_url.replace("localhost:3100", "web:3000")
+        elif "127.0.0.1:3100" in webhook_url:
+            resolved_webhook_url = webhook_url.replace("127.0.0.1:3100", "web:3000")
+        elif "localhost:3000" in webhook_url:
+            resolved_webhook_url = webhook_url.replace("localhost:3000", "web:3000")
+        elif "127.0.0.1:3000" in webhook_url:
+            resolved_webhook_url = webhook_url.replace("127.0.0.1:3000", "web:3000")
+
+        logger.info(f"Sending early normalization webhook to {resolved_webhook_url}")
+        early_results = {
+            "asset_id": asset_id,
+            "metadata": results["metadata"],
+            "normalized_url": results["normalized_url"],
+            "thumbnail_url": results.get("thumbnail_url"),
+            "status": "processing"
+        }
+        with httpx.Client(timeout=30) as client:
+            client.post(resolved_webhook_url, json=early_results)
+    except Exception as e:
+        logger.error(f"Early webhook failed: {e}")
+
     # 2. Transcription
     if job:
         job.meta['progress'] = 'transcribing'

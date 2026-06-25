@@ -11,7 +11,7 @@ export async function POST(req: Request) {
 	try {
 		const data = await req.json();
 
-		const { asset_id, metadata, normalized_url, thumbnail_url, transcripts: transcriptData, objects, scenes } = data;
+		const { asset_id, metadata, normalized_url, thumbnail_url, status, transcripts: transcriptData, objects, scenes } = data;
 
 		if (!asset_id) {
 			return NextResponse.json({ error: "Missing asset_id" }, { status: 400 });
@@ -26,11 +26,11 @@ export async function POST(req: Request) {
 				metadata: metadata,
 				normalizedUrl: normalized_url,
 				thumbnailUrl: thumbnail_url,
-				status: "completed",
+				status: status || "completed",
 			})
 			.onConflictDoUpdate({
 				target: assetMetadata.assetId,
-				set: { metadata, normalizedUrl: normalized_url, thumbnailUrl: thumbnail_url, status: "completed", updatedAt: new Date() },
+				set: { metadata, normalizedUrl: normalized_url, thumbnailUrl: thumbnail_url, status: status || "completed", updatedAt: new Date() },
 			});
 
 		// Insert transcript if available
