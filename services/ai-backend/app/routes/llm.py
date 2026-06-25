@@ -45,16 +45,29 @@ async def llm_status() -> dict:
     status = await llm_backend.get_status()
     ollama = status["ollama"]
     tq = status["turboquant"]
+    openai = status["openai"]
+
+    available = ollama["available"] or tq["available"] or openai["available"]
+    
+    # If OpenAI is active, set the model info accordingly
+    models = ollama["models"]
+    default_model = ollama_service.default_model
+    url = ollama["url"]
+    
+    if openai["available"] and status["active_backend"] == "openai":
+        default_model = openai["model"]
+        url = openai["url"]
+        models = [{"name": openai["model"], "size": 0, "modified_at": ""}]
 
     return {
-        "available": ollama["available"] or tq["available"],
-        "url": ollama["url"],
-        "default_model": ollama_service.default_model,
+        "available": available,
+        "url": url,
+        "default_model": default_model,
         "active_backend": status["active_backend"],
         "turboquant_available": tq["available"],
         "turboquant_model": tq["active_model"],
         "kv_cache_bits": tq["kv_cache_bits"],
-        "models": ollama["models"],
+        "models": models,
     }
 
 

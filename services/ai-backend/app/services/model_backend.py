@@ -459,6 +459,8 @@ class LLMBackend:
         """Check if any LLM backend is available."""
         if await self._is_turboquant_ready():
             return True
+        if self._should_use_openai():
+            return True
         # Fall back to checking Ollama
         try:
             async with self._ollama_client() as client:
