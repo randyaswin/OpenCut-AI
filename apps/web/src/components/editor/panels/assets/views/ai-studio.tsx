@@ -83,30 +83,6 @@ async function buildProjectContext(editor: ReturnType<typeof useEditor>) {
 	const chapters = useTranscriptStore.getState().chapters;
 	const project = editor.project.getActiveOrNull();
 
-	const assetIds = editor.media.getAssets().map(a => a.id);
-	let richMetadata = {};
-	if (assetIds.length > 0) {
-		try {
-			const res = await fetch("/api/assets/metadata/batch", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ assetIds }),
-			});
-			if (res.ok) {
-				const raw = await res.json();
-				// Strip out raw ffprobe metadata to prevent overwhelming the LLM
-				Object.keys(raw).forEach((key) => {
-					if (raw[key]) {
-						delete raw[key].metadata;
-					}
-				});
-				richMetadata = raw;
-			}
-		} catch (e) {
-			console.error("Failed to fetch rich metadata", e);
-		}
-	}
-
 	return {
 		duration: project?.metadata?.duration ?? 0,
 		trackCount: tracks.length,
@@ -123,18 +99,7 @@ async function buildProjectContext(editor: ReturnType<typeof useEditor>) {
 		segmentCount: segments.length,
 		chapterCount: chapters.length,
 		settings: project?.settings,
-		mediaLibrary: editor.media.getAssets().map((a) => {
-			const rm = richMetadata[a.id] || {};
-			return {
-				id: a.id,
-				name: a.name,
-				type: a.type,
-				duration: a.duration,
-				transcripts: rm.transcripts,
-				detectedObjects: rm.detectedObjects,
-				sceneDescriptions: rm.sceneDescriptions
-			};
-		}),
+		mediaLibraryAvailable: "Use the LIST_MEDIA tool to see available assets.",
 	};
 }
 
@@ -533,26 +498,94 @@ export function AIStudioView() {
 				systemPrompt = COPILOT_SYSTEM_PROMPT;
 			}
 
-			const result = await aiClient.chatStream(
-				prompt,
-				(_token, accumulated) => {
-					if (!messageAdded) {
-						// Add the assistant message only when the first token arrives
-						addMessage({
-							id: assistantId,
-							role: "assistant",
-							content: accumulated,
-						});
-						messageAdded = true;
-					} else {
-						updateMessage(assistantId, accumulated);
-					}
-				},
-				systemPrompt,
-			);
+			let finalResponse = "";
 
-			// Final update with complete response
-			if (!result.response) {
+			const executeAgentLoop = async (initialPrompt: string) => {
+				let loopCount = 0;
+				let currentMessage = initialPrompt;
+				
+				while (loopCount < 10) { // Max 10 loops
+					loopCount++;
+					let fullResponse = "";
+					
+					await aiClient.chatStream(
+						currentMessage,
+						(_token, accumulated) => {
+							fullResponse = accumulated;
+							if (!messageAdded) {
+								addMessage({
+									id: assistantId,
+									role: "assistant",
+									content: accumulated,
+								});
+								messageAdded = true;
+							} else {
+								updateMessage(assistantId, accumulated);
+							}
+						},
+						systemPrompt,
+					);
+					
+					finalResponse = fullResponse;
+
+					// Check if the AI emitted a tool call block
+					const toolCallMatch = fullResponse.match(/```json tool-call\s*([\s\S]*?)\s*```/);
+					if (toolCallMatch) {
+						let toolResult = "";
+						try {
+							const toolData = JSON.parse(toolCallMatch[1]);
+							console.log("Agent executing tool:", toolData.tool, toolData.params);
+							
+							if (toolData.tool === "LIST_MEDIA") {
+								const assets = editor.media.getAssets().map(a => ({ id: a.id, name: a.name, type: a.type }));
+								toolResult = JSON.stringify(assets, null, 2);
+							} else if (toolData.tool === "GET_MEDIA_METADATA") {
+								const assetId = toolData.params?.assetId;
+								if (assetId) {
+									const res = await fetch("/api/assets/metadata/batch", {
+										method: "POST",
+										headers: { "Content-Type": "application/json" },
+										body: JSON.stringify({ assetIds: [assetId] }),
+									});
+									if (res.ok) {
+										const raw = await res.json();
+										if (raw[assetId]) {
+											// Strip raw ffprobe data
+											delete raw[assetId].metadata;
+											toolResult = JSON.stringify(raw[assetId], null, 2);
+										} else {
+											toolResult = "No metadata found for asset ID " + assetId;
+										}
+									} else {
+										toolResult = "Failed to fetch metadata";
+									}
+								} else {
+									toolResult = "Error: assetId param missing";
+								}
+							} else {
+								toolResult = `Error: Unknown tool '${toolData.tool}'`;
+							}
+						} catch (e) {
+							toolResult = "Error parsing tool call JSON: " + (e instanceof Error ? e.message : String(e));
+						}
+						
+						// Append tool execution result and loop
+						currentMessage = `${currentMessage}\n\nAssistant:\n${fullResponse}\n\nSystem: Tool Result:\n${toolResult}\n\nAssistant:`;
+						
+						// Give visual feedback that we are thinking again
+						updateMessage(assistantId, `${fullResponse}\n\n*Running tool...*`);
+						continue;
+					}
+					
+					// If no tool call was emitted, we break the loop
+					break;
+				}
+			};
+
+			await executeAgentLoop(prompt);
+
+			// Final update with complete response if it was empty
+			if (!finalResponse) {
 				if (!messageAdded) {
 					addMessage({
 						id: assistantId,
