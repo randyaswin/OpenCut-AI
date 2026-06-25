@@ -24,6 +24,7 @@ import { useTranscriptStore } from "@/stores/transcript-store";
 import { toast } from "sonner";
 import { useEditor } from "@/hooks/use-editor";
 import { COPILOT_SYSTEM_PROMPT, type CopilotPlan } from "@/lib/copilot/copilot-types";
+import { runAgentLoop } from "@/lib/copilot/agent-loop";
 import { executeAction, previewAction } from "@/lib/ai-action-executor";
 import { TemplatePanel } from "@/components/editor/ai/template-panel";
 import { BRollSuggestionsPanel } from "@/components/editor/ai/broll-suggestions-panel";
@@ -503,20 +504,10 @@ export function AIStudioView() {
 				if (!prompt.includes(fullText.slice(0, 50))) {
 					prompt = `${prompt}\n\nTranscript:\n${fullText}`;
 				}
-			} else if (mode === "chat") {
-				const context = await buildProjectContext(editor);
-				// In agent mode, we only pass lightweight context upfront.
-				prompt = `Goal: ${prompt}\n\nCurrent project state (lightweight):\n${JSON.stringify(context, null, 2)}`;
-				systemPrompt = COPILOT_SYSTEM_PROMPT;
-			}
 
-			let isFirstLoop = true;
-
-			const agentLoop = async (currentPrompt: string) => {
 				let accumulatedResult = "";
-
 				const result = await aiClient.chatStream(
-					currentPrompt,
+					prompt,
 					(_token, accumulated) => {
 						accumulatedResult = accumulated;
 						if (!messageAdded) {
@@ -534,78 +525,66 @@ export function AIStudioView() {
 				);
 
 				const responseText = result.response || accumulatedResult;
-
-				// Final update to catch edge cases where response is empty
 				if (!responseText) {
 					const fallbackMsg = "Here's what I suggest based on your request.";
 					if (!messageAdded) {
 						addMessage({ id: assistantId, role: "assistant", content: fallbackMsg });
-						messageAdded = true;
 					} else {
 						updateMessage(assistantId, fallbackMsg);
 					}
-					return;
 				}
+			} else if (mode === "chat") {
+				systemPrompt = COPILOT_SYSTEM_PROMPT;
 
-				// Check for tool calls in the response
-				const toolMatch = responseText.match(/```json tool-call\s*([\s\S]*?)\s*```/);
-				if (toolMatch) {
-					try {
-						const toolCall = JSON.parse(toolMatch[1]);
-						let toolResult = "";
-
-						if (toolCall.tool === "LIST_MEDIA") {
-							const assets = editor.media.getAssets().map(a => ({ id: a.id, name: a.name, type: a.type, duration: a.duration }));
-							toolResult = JSON.stringify(assets, null, 2);
-						} else if (toolCall.tool === "GET_MEDIA_METADATA") {
-							const assetId = toolCall.params?.assetId;
-							if (!assetId) {
-								toolResult = "Error: assetId param missing.";
-							} else {
-								const res = await fetch("/api/assets/metadata/batch", { 
-									method: "POST", 
-									headers: { "Content-Type": "application/json" }, 
-									body: JSON.stringify({ assetIds: [assetId] }) 
-								});
-								if (res.ok) {
-									const raw = await res.json();
-									if (raw[assetId]) {
-										delete raw[assetId].metadata; // strip raw ffprobe data
-										toolResult = JSON.stringify(raw[assetId], null, 2);
-									} else {
-										toolResult = "No semantic metadata found for this asset.";
-									}
-								} else {
-									toolResult = "Failed to fetch metadata from server.";
-								}
-							}
+				let lastTurn = 1;
+				let accumulatedContent = "";
+				const loopResult = await runAgentLoop({
+					goal: prompt,
+					systemPrompt,
+					editor,
+					onToken: (token, turn) => {
+						lastTurn = turn;
+						accumulatedContent += token;
+						if (!messageAdded) {
+							addMessage({
+								id: assistantId,
+								role: "assistant",
+								content: accumulatedContent,
+							});
+							messageAdded = true;
 						} else {
-							toolResult = `Unknown tool: ${toolCall.tool}`;
+							updateMessage(assistantId, accumulatedContent);
 						}
+					},
+					onToolCall: (toolName, params, turn) => {
+						lastTurn = turn;
+						const toolMessage = `\n\n> 🛠️ **Tool Call (Turn ${turn}/8):** Running \`${toolName}\`... \n\n`;
+						accumulatedContent += toolMessage;
+						if (!messageAdded) {
+							addMessage({
+								id: assistantId,
+								role: "assistant",
+								content: accumulatedContent,
+							});
+							messageAdded = true;
+						} else {
+							updateMessage(assistantId, accumulatedContent);
+						}
+					},
+					maxIterations: 8,
+				});
 
-						// Show user that a tool was used
-						const displayMsg = responseText + `\n\n> 🛠️ **Tool Result:** \`${toolCall.tool}\` completed. _Thinking..._`;
-						updateMessage(assistantId, displayMsg);
-
-						// Build the updated history for the LLM
-						// If it's the first loop, the `currentPrompt` is the User's input.
-						// We must prefix the Assistant's response to maintain the dialogue chain.
-						const historyPrefix = isFirstLoop ? `User: ${currentPrompt}\n\n` : `${currentPrompt}\n\n`;
-						isFirstLoop = false;
-						
-						const nextPrompt = `${historyPrefix}Assistant:\n${responseText}\n\nSystem: Tool Result:\n${toolResult}\n\nAssistant:\n`;
-						
-						// Recurse to let the AI think again with the new context
-						await agentLoop(nextPrompt);
-					} catch (err) {
-						console.error("Tool parsing/execution failed:", err);
-						updateMessage(assistantId, responseText + "\n\n> ⚠️ **Tool Error:** Failed to execute tool.");
-					}
+				const finalContent = loopResult.rawOutput || "No plan was generated.";
+				if (!messageAdded) {
+					addMessage({
+						id: assistantId,
+						role: "assistant",
+						content: finalContent,
+					});
+				} else {
+					updateMessage(assistantId, finalContent);
 				}
-			};
-
-			// Kick off the loop
-			await agentLoop(prompt);
+			}
 
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : "";

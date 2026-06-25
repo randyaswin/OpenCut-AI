@@ -18,9 +18,10 @@ changes. Update it when you learn something that the next session needs.
 2. Add a third LLM backend: OpenAI-compatible (OpenAI, OpenRouter, Groq,
    vLLM, LM Studio, etc.) alongside the existing Ollama/TurboQuant
    backends, auto-selected when configured, with graceful fallback.
-3. Rewrite the AI Co-Pilot's system prompt into a real tool-calling agent
-   prompt with an explicit confirmation policy (see "Confirmation policy"
-   below).
+3. Rewrite the AI Co-Pilot to use a real tool-calling ReAct loop agent architecture
+   (Reason -> Act -> Observe -> Reason again) with an explicit confirmation policy.
+   The loop should support query tools (e.g. LIST_MEDIA, GET_MEDIA_METADATA) and timeline
+   actions, capping at a maximum number of iterations (e.g., 8) to prevent runaways.
 4. Wire up real implementations for the agent's editing actions — many
    currently exist only as `console.warn(...)` stubs — and add new tools
    for scene detection, auto-cut, auto-transition, auto-audio cleanup,
@@ -147,6 +148,10 @@ changes. Update it when you learn something that the next session needs.
   `LUMA_API_KEY` but `docker-compose.yml` previously did not pass any of
   them through as `OPENCUTAI_*` env vars to the `ai-backend` container —
   always blank in Docker regardless of `.env`.
+- The AI Co-Pilot uses a unified, recursive ReAct loop agent runner implemented
+  in `apps/web/src/lib/copilot/agent-loop.ts`. This utility handles tool calling
+  (`LIST_MEDIA`, `GET_MEDIA_METADATA`, `GET_TIMELINE_STATE`) and streams
+  live reasoning tokens to the UI, returning a final `CopilotPlan` to the caller.
 
 ## Conventions to follow
 
