@@ -83,6 +83,11 @@ async function buildProjectContext(editor: ReturnType<typeof useEditor>) {
 	const chapters = useTranscriptStore.getState().chapters;
 	const project = editor.project.getActiveOrNull();
 
+	const assetIds = editor.media.getAssets().map(a => a.id);
+	let richMetadata = {};
+	let richMetadata = {}; // Keeping variable declaration just in case it's needed later, but we no longer eagerly load batch metadata.
+
+
 	return {
 		duration: project?.metadata?.duration ?? 0,
 		trackCount: tracks.length,
@@ -99,7 +104,14 @@ async function buildProjectContext(editor: ReturnType<typeof useEditor>) {
 		segmentCount: segments.length,
 		chapterCount: chapters.length,
 		settings: project?.settings,
-		mediaLibraryAvailable: "Use the LIST_MEDIA tool to see available assets.",
+		mediaLibrary: editor.media.getAssets().map((a) => {
+			return {
+				id: a.id,
+				name: a.name,
+				type: a.type,
+				duration: a.duration,
+			};
+		}),
 	};
 }
 
@@ -494,108 +506,108 @@ export function AIStudioView() {
 				}
 			} else if (mode === "chat") {
 				const context = await buildProjectContext(editor);
-				prompt = `Goal: ${prompt}\n\nCurrent project state:\n${JSON.stringify(context, null, 2)}`;
+				// In agent mode, we only pass lightweight context upfront.
+				prompt = `Goal: ${prompt}\n\nCurrent project state (lightweight):\n${JSON.stringify(context, null, 2)}`;
 				systemPrompt = COPILOT_SYSTEM_PROMPT;
 			}
 
-			let finalResponse = "";
+			let isFirstLoop = true;
 
-			const executeAgentLoop = async (initialPrompt: string) => {
-				let loopCount = 0;
-				let currentMessage = initialPrompt;
-				
-				while (loopCount < 10) { // Max 10 loops
-					loopCount++;
-					let fullResponse = "";
-					
-					await aiClient.chatStream(
-						currentMessage,
-						(_token, accumulated) => {
-							fullResponse = accumulated;
-							if (!messageAdded) {
-								addMessage({
-									id: assistantId,
-									role: "assistant",
-									content: accumulated,
-								});
-								messageAdded = true;
-							} else {
-								updateMessage(assistantId, accumulated);
-							}
-						},
-						systemPrompt,
-					);
-					
-					finalResponse = fullResponse;
+			const agentLoop = async (currentPrompt: string) => {
+				let accumulatedResult = "";
 
-					// Check if the AI emitted a tool call block
-					const toolCallMatch = fullResponse.match(/```json tool-call\s*([\s\S]*?)\s*```/);
-					if (toolCallMatch) {
+				const result = await aiClient.chatStream(
+					currentPrompt,
+					(_token, accumulated) => {
+						accumulatedResult = accumulated;
+						if (!messageAdded) {
+							addMessage({
+								id: assistantId,
+								role: "assistant",
+								content: accumulated,
+							});
+							messageAdded = true;
+						} else {
+							updateMessage(assistantId, accumulated);
+						}
+					},
+					systemPrompt,
+				);
+
+				const responseText = result.response || accumulatedResult;
+
+				// Final update to catch edge cases where response is empty
+				if (!responseText) {
+					const fallbackMsg = "Here's what I suggest based on your request.";
+					if (!messageAdded) {
+						addMessage({ id: assistantId, role: "assistant", content: fallbackMsg });
+						messageAdded = true;
+					} else {
+						updateMessage(assistantId, fallbackMsg);
+					}
+					return;
+				}
+
+				// Check for tool calls in the response
+				const toolMatch = responseText.match(/```json tool-call\s*([\s\S]*?)\s*```/);
+				if (toolMatch) {
+					try {
+						const toolCall = JSON.parse(toolMatch[1]);
 						let toolResult = "";
-						try {
-							const toolData = JSON.parse(toolCallMatch[1]);
-							console.log("Agent executing tool:", toolData.tool, toolData.params);
-							
-							if (toolData.tool === "LIST_MEDIA") {
-								const assets = editor.media.getAssets().map(a => ({ id: a.id, name: a.name, type: a.type }));
-								toolResult = JSON.stringify(assets, null, 2);
-							} else if (toolData.tool === "GET_MEDIA_METADATA") {
-								const assetId = toolData.params?.assetId;
-								if (assetId) {
-									const res = await fetch("/api/assets/metadata/batch", {
-										method: "POST",
-										headers: { "Content-Type": "application/json" },
-										body: JSON.stringify({ assetIds: [assetId] }),
-									});
-									if (res.ok) {
-										const raw = await res.json();
-										if (raw[assetId]) {
-											// Strip raw ffprobe data
-											delete raw[assetId].metadata;
-											toolResult = JSON.stringify(raw[assetId], null, 2);
-										} else {
-											toolResult = "No metadata found for asset ID " + assetId;
-										}
+
+						if (toolCall.tool === "LIST_MEDIA") {
+							const assets = editor.media.getAssets().map(a => ({ id: a.id, name: a.name, type: a.type, duration: a.duration }));
+							toolResult = JSON.stringify(assets, null, 2);
+						} else if (toolCall.tool === "GET_MEDIA_METADATA") {
+							const assetId = toolCall.params?.assetId;
+							if (!assetId) {
+								toolResult = "Error: assetId param missing.";
+							} else {
+								const res = await fetch("/api/assets/metadata/batch", { 
+									method: "POST", 
+									headers: { "Content-Type": "application/json" }, 
+									body: JSON.stringify({ assetIds: [assetId] }) 
+								});
+								if (res.ok) {
+									const raw = await res.json();
+									if (raw[assetId]) {
+										delete raw[assetId].metadata; // strip raw ffprobe data
+										toolResult = JSON.stringify(raw[assetId], null, 2);
 									} else {
-										toolResult = "Failed to fetch metadata";
+										toolResult = "No semantic metadata found for this asset.";
 									}
 								} else {
-									toolResult = "Error: assetId param missing";
+									toolResult = "Failed to fetch metadata from server.";
 								}
-							} else {
-								toolResult = `Error: Unknown tool '${toolData.tool}'`;
 							}
-						} catch (e) {
-							toolResult = "Error parsing tool call JSON: " + (e instanceof Error ? e.message : String(e));
+						} else {
+							toolResult = `Unknown tool: ${toolCall.tool}`;
 						}
+
+						// Show user that a tool was used
+						const displayMsg = responseText + `\n\n> 🛠️ **Tool Result:** \`${toolCall.tool}\` completed. _Thinking..._`;
+						updateMessage(assistantId, displayMsg);
+
+						// Build the updated history for the LLM
+						// If it's the first loop, the `currentPrompt` is the User's input.
+						// We must prefix the Assistant's response to maintain the dialogue chain.
+						const historyPrefix = isFirstLoop ? `User: ${currentPrompt}\n\n` : `${currentPrompt}\n\n`;
+						isFirstLoop = false;
 						
-						// Append tool execution result and loop
-						currentMessage = `${currentMessage}\n\nAssistant:\n${fullResponse}\n\nSystem: Tool Result:\n${toolResult}\n\nAssistant:`;
+						const nextPrompt = `${historyPrefix}Assistant:\n${responseText}\n\nSystem: Tool Result:\n${toolResult}\n\nAssistant:\n`;
 						
-						// Give visual feedback that we are thinking again
-						updateMessage(assistantId, `${fullResponse}\n\n*Running tool...*`);
-						continue;
+						// Recurse to let the AI think again with the new context
+						await agentLoop(nextPrompt);
+					} catch (err) {
+						console.error("Tool parsing/execution failed:", err);
+						updateMessage(assistantId, responseText + "\n\n> ⚠️ **Tool Error:** Failed to execute tool.");
 					}
-					
-					// If no tool call was emitted, we break the loop
-					break;
 				}
 			};
 
-			await executeAgentLoop(prompt);
+			// Kick off the loop
+			await agentLoop(prompt);
 
-			// Final update with complete response if it was empty
-			if (!finalResponse) {
-				if (!messageAdded) {
-					addMessage({
-						id: assistantId,
-						role: "assistant",
-						content: "Here's what I suggest based on your request.",
-					});
-				} else {
-					updateMessage(assistantId, "Here's what I suggest based on your request.");
-				}
-			}
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : "";
 			const isOllamaDown = detail.includes("503") || detail.includes("Ollama");
