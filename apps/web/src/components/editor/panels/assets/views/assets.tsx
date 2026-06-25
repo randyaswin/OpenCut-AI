@@ -309,9 +309,38 @@ export function MediaView() {
 						}).then(() => {
 							const currentAsset = editor.media.getAssets().find(a => a.id === mediaId);
 							performIngest(currentAsset?.proxyFile || asset.file);
-						}).catch((err) => {
-							console.warn("Proxy generation failed, falling back to raw file:", err);
-							performIngest(asset.file);
+						}).catch(async (err) => {
+							console.warn("Proxy generation failed natively, falling back to WASM normalizer:", err);
+							
+							try {
+								useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+									progress: "WASM Fallback (slow)...",
+								});
+								
+								const { normalizeVideo } = await import("@/lib/media/ffmpeg-normalizer");
+								
+								const normalizedFile = await normalizeVideo(asset.file, (p) => {
+									useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+										progress: `WASM: ${Math.round(p)}%`,
+									});
+								});
+								
+								const normalizedUrl = URL.createObjectURL(normalizedFile);
+								
+								editor.media.updateMediaAsset({
+									projectId: activeProject.metadata.id,
+									id: mediaId,
+									updates: {
+										normalizedFile,
+										normalizedUrl,
+									}
+								});
+								
+								performIngest(normalizedFile);
+							} catch (fallbackErr) {
+								console.error("WASM fallback also failed, uploading raw:", fallbackErr);
+								performIngest(asset.file);
+							}
 						});
 					} else {
 						performIngest(asset.file);
