@@ -100,34 +100,31 @@ changes. Update it when you learn something that the next session needs.
   feeding a text description to the LLM.
 - No general object detection service exists yet (face-service is
   face-only via mediapipe). Auto-reframe today is face-tracking only
-  (`face_reframe.py`). A real object detector (e.g. YOLOv8/ONNX or an
-  open-vocabulary detector) is needed for non-person subjects and for
-  the ingest pipeline's object-detection step. This is new
-  infrastructure, not a rewire of something existing.
+  (`face_reframe.py`). A real object detector (YOLOv8 `yolov8n.pt`) has been
+  added to the ingest pipeline (`ingest_pipeline.py`) to detect and tag objects in video frames and images.
 - No asset ingest pipeline exists yet. Today, transcription/analysis
   happens on-demand per-feature (user clicks "transcribe", "denoise",
   etc.), not automatically when a file is added to a project. Phase 6
   introduces this as new infrastructure (a job queue consumer), it does
-  not just wire up existing buttons.
+  not just wire up existing buttons. The ingest pipeline now handles both videos and static images differently.
 - No video format-normalization step exists yet. GoPro (commonly
   HEVC/H.265 in MP4, sometimes with GPMF metadata track, sometimes
   high-FPS/HDR variable frame rate) and iPhone (HEVC in MOV, with
   `rotation` matrix in the moov atom rather than baked-in pixels, and
   ProRes/Dolby Vision on newer models) footage can both fail or render
   incorrectly in browser-based playback/WebGL preview without an
-  explicit transcode/remux step. This is new infrastructure (Phase 5).
+  explicit transcode/remux step. This has been resolved in Phase 5: 
+  The pipeline now checks if format is `.mov` or codec is `hevc`/`h265` or has `gpmd` metadata, 
+  and normalizes these specific files to `libx264` MP4 via FFmpeg.
 - Persistence today: `DATABASE_URL` (Postgres via `apps/web`) exists for
   *some* project state already (see `apps/web/migrations/`), and most
   media/timeline data lives in OPFS (Origin Private File System) per the
   README ("All data local... Files stored in OPFS"). Derived AI metadata
   (transcripts, detected objects, scene descriptions, EXIF) does NOT yet
-  have a defined persistence target — confirm during Phase 6/7 whether
-  it should live in Postgres (queryable, multi-asset joins) vs. OPFS
-  (consistent with existing media storage) vs. both (Postgres for
-  metadata, OPFS/disk for large blobs like transcripts). Recommend
-  Postgres for structured per-asset metadata since the agent will query
-  it ("find clips with a dog in them"), with large text blobs
-  (full transcripts) either inline (if small) or referenced by path.
+  have a defined persistence target. Phase 7 conclusion: 
+  `assetMetadata`, `transcripts`, `detectedObjects`, and `sceneDescriptions` 
+  are structurally persisted in Postgres (`schema.ts`), linked via `assetId` 
+  to the OPFS project assets. Batch APIs are used by the AI context to retrieve them.
 - `clip-service` already does CLIP embeddings + zero-shot tagging
   (`POST /api/search/zero-shot-tags`, `embed-frames`, `embed-text`) —
   this is a candidate building block for object/content tagging in the
