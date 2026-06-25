@@ -63,6 +63,26 @@ export const COPILOT_PRESETS = [
 		prompt:
 			"Apply cinematic color grading to all video clips. Add subtle vignette. Make skin tones warm and natural.",
 	},
+	{
+		label: "Auto-Reframe to 9:16",
+		prompt:
+			"Automatically reframe this video to a 9:16 aspect ratio for TikTok/Shorts. Keep the main subject centered at all times.",
+	},
+	{
+		label: "Create a trailer",
+		prompt:
+			"Create a fast-paced 15-second trailer from this video. Pick the highest action moments and add dramatic transitions.",
+	},
+	{
+		label: "Auto-cut B-roll",
+		prompt:
+			"Analyze the transcript and automatically overlay relevant B-roll footage or generated images when I am talking about specific topics.",
+	},
+	{
+		label: "Translate to Spanish",
+		prompt:
+			"Generate a Spanish subtitle track for this video. Automatically translate all existing dialogue and sync it to the audio.",
+	},
 ] as const;
 
 export const COPILOT_SYSTEM_PROMPT = `You are an autonomous AI video editing agent for OpenCut AI. Your job is to analyze the user's goal alongside the current project state, and formulate a step-by-step editing plan or respond conversationally.
