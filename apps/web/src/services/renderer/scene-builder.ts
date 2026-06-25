@@ -70,12 +70,12 @@ function buildTrackNodes({
 					mediaAsset.proxyFile &&
 					mediaAsset.proxyUrl;
 
-				const effectiveFile = mediaAsset.normalizedFile
+				const effectiveFile = (isPreview && mediaAsset.normalizedFile)
 					? mediaAsset.normalizedFile
 					: shouldUseProxy
 						? mediaAsset.proxyFile!
 						: mediaAsset.file;
-				const effectiveUrl = mediaAsset.normalizedUrl
+				const effectiveUrl = (isPreview && mediaAsset.normalizedUrl)
 					? mediaAsset.normalizedUrl
 					: shouldUseProxy
 						? mediaAsset.proxyUrl!

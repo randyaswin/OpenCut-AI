@@ -122,7 +122,12 @@ export function MediaView() {
 						body: JSON.stringify({ status: "pending" }),
 					}).catch(console.error);
 
-					aiClient.ingestAsset(mediaId, asset.file, webhookUrl)
+					const performIngest = (fileToUpload: File) => {
+						useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+							progress: "Uploading to AI...",
+						});
+
+						aiClient.ingestAsset(mediaId, fileToUpload, webhookUrl)
 						.then((res) => {
 							const jobId = res.job_id;
 							const pollInterval = setInterval(async () => {
@@ -285,6 +290,32 @@ export function MediaView() {
 								error: err instanceof Error ? err.message : String(err),
 							});
 						});
+					};
+
+					if (asset.file.type.startsWith("video/")) {
+						useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+							progress: "Generating local proxy...",
+						});
+						
+						editor.media.generateProxyForAsset({
+							assetId: mediaId,
+							projectId: activeProject.metadata.id,
+							resolution: "720p",
+							onProgress: (p) => {
+								useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+									progress: `Proxy: ${Math.round(p * 100)}%`,
+								});
+							}
+						}).then(() => {
+							const currentAsset = editor.media.getAssets().find(a => a.id === mediaId);
+							performIngest(currentAsset?.proxyFile || asset.file);
+						}).catch((err) => {
+							console.warn("Proxy generation failed, falling back to raw file:", err);
+							performIngest(asset.file);
+						});
+					} else {
+						performIngest(asset.file);
+					}
 				}
 			}
 		} catch (error) {
