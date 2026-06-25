@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import type { AIBackendStatus, AIErrorType, AISuggestion } from "@/types/ai";
 
 export interface SavedIdea {
@@ -46,107 +47,119 @@ interface AIState {
 	clearStudioMessages: () => void;
 }
 
-export const useAIStore = create<AIState>()((set) => ({
-	backendStatus: null,
-	suggestions: [],
-	commandHistory: [],
-	isCommandPanelOpen: false,
-	isSetupGuideOpen: false,
-	activeModel: null,
-	hasCompletedSetup: false,
-	lastError: null,
-	lastErrorType: null,
-	consecutiveFailures: 0,
-	savedIdeas: [],
-	studioMessages: [],
+export const useAIStore = create<AIState>()(
+	persist(
+		(set) => ({
+			backendStatus: null,
+			suggestions: [],
+			commandHistory: [],
+			isCommandPanelOpen: false,
+			isSetupGuideOpen: false,
+			activeModel: null,
+			hasCompletedSetup: false,
+			lastError: null,
+			lastErrorType: null,
+			consecutiveFailures: 0,
+			savedIdeas: [],
+			studioMessages: [],
 
-	setBackendStatus: (status) =>
-		set({
-			backendStatus: status,
-			lastError: status?.error ?? null,
-			lastErrorType: status?.errorType ?? null,
-			consecutiveFailures: status?.available ? 0 : undefined,
+			setBackendStatus: (status) =>
+				set({
+					backendStatus: status,
+					lastError: status?.error ?? null,
+					lastErrorType: status?.errorType ?? null,
+					consecutiveFailures: status?.available ? 0 : undefined,
+				}),
+
+			setConnectionError: (error, errorType) =>
+				set((state) => ({
+					backendStatus: {
+						available: false,
+						models: [],
+						gpuAvailable: false,
+						error,
+						errorType,
+					},
+					lastError: error,
+					lastErrorType: errorType,
+					consecutiveFailures: state.consecutiveFailures + 1,
+				})),
+
+			clearError: () => set({ lastError: null, lastErrorType: null }),
+
+			addSuggestion: (suggestion) =>
+				set((state) => ({
+					suggestions: [...state.suggestions, suggestion],
+				})),
+
+			dismissSuggestion: (id) =>
+				set((state) => ({
+					suggestions: state.suggestions.map((s) =>
+						s.id === id ? { ...s, dismissed: true } : s,
+					),
+				})),
+
+			clearSuggestions: () => set({ suggestions: [] }),
+
+			addCommand: (command) =>
+				set((state) => ({
+					commandHistory: [...state.commandHistory, command],
+				})),
+
+			toggleCommandPanel: () =>
+				set((state) => ({
+					isCommandPanelOpen: !state.isCommandPanelOpen,
+				})),
+
+			toggleSetupGuide: () =>
+				set((state) => ({
+					isSetupGuideOpen: !state.isSetupGuideOpen,
+				})),
+
+			setActiveModel: (model) => set({ activeModel: model }),
+
+			setHasCompletedSetup: (completed) => set({ hasCompletedSetup: completed }),
+
+			saveIdea: (content) =>
+				set((state) => ({
+					savedIdeas: [
+						...state.savedIdeas,
+						{
+							id: crypto.randomUUID(),
+							content,
+							savedAt: Date.now(),
+						},
+					],
+				})),
+
+			removeIdea: (id) =>
+				set((state) => ({
+					savedIdeas: state.savedIdeas.filter((idea) => idea.id !== id),
+				})),
+
+			clearIdeas: () => set({ savedIdeas: [] }),
+
+			addStudioMessage: (message) =>
+				set((state) => ({
+					studioMessages: [...state.studioMessages, message],
+				})),
+
+			updateStudioMessage: (id, content) =>
+				set((state) => ({
+					studioMessages: state.studioMessages.map((msg) =>
+						msg.id === id ? { ...msg, content } : msg,
+					),
+				})),
+
+			clearStudioMessages: () => set({ studioMessages: [] }),
 		}),
-
-	setConnectionError: (error, errorType) =>
-		set((state) => ({
-			backendStatus: {
-				available: false,
-				models: [],
-				gpuAvailable: false,
-				error,
-				errorType,
-			},
-			lastError: error,
-			lastErrorType: errorType,
-			consecutiveFailures: state.consecutiveFailures + 1,
-		})),
-
-	clearError: () => set({ lastError: null, lastErrorType: null }),
-
-	addSuggestion: (suggestion) =>
-		set((state) => ({
-			suggestions: [...state.suggestions, suggestion],
-		})),
-
-	dismissSuggestion: (id) =>
-		set((state) => ({
-			suggestions: state.suggestions.map((s) =>
-				s.id === id ? { ...s, dismissed: true } : s,
-			),
-		})),
-
-	clearSuggestions: () => set({ suggestions: [] }),
-
-	addCommand: (command) =>
-		set((state) => ({
-			commandHistory: [...state.commandHistory, command],
-		})),
-
-	toggleCommandPanel: () =>
-		set((state) => ({
-			isCommandPanelOpen: !state.isCommandPanelOpen,
-		})),
-
-	toggleSetupGuide: () =>
-		set((state) => ({
-			isSetupGuideOpen: !state.isSetupGuideOpen,
-		})),
-
-	setActiveModel: (model) => set({ activeModel: model }),
-
-	setHasCompletedSetup: (completed) => set({ hasCompletedSetup: completed }),
-
-	saveIdea: (content) =>
-		set((state) => ({
-			savedIdeas: [
-				...state.savedIdeas,
-				{
-					id: crypto.randomUUID(),
-					content,
-					savedAt: Date.now(),
-				},
-			],
-		})),
-
-	removeIdea: (id) =>
-		set((state) => ({
-			savedIdeas: state.savedIdeas.filter((idea) => idea.id !== id),
-		})),
-
-	clearIdeas: () => set({ savedIdeas: [] }),
-
-	addStudioMessage: (message) =>
-		set((state) => ({
-			studioMessages: [...state.studioMessages, message],
-		})),
-
-	updateStudioMessage: (id, content) =>
-		set((state) => ({
-			studioMessages: state.studioMessages.map((msg) =>
-				msg.id === id ? { ...msg, content } : msg,
-			),
-		})),
-
-	clearStudioMessages: () => set({ studioMessages: [] }),
-}));
+		{
+			name: "opencut-ai-store",
+			partialize: (state) => ({
+				savedIdeas: state.savedIdeas,
+				studioMessages: state.studioMessages,
+				hasCompletedSetup: state.hasCompletedSetup,
+			}),
+		},
+	),
+);
