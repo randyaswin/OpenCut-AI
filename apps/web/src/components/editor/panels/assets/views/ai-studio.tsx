@@ -85,7 +85,6 @@ async function buildProjectContext(editor: ReturnType<typeof useEditor>) {
 
 	const assetIds = editor.media.getAssets().map(a => a.id);
 	let richMetadata = {};
-	let richMetadata = {}; // Keeping variable declaration just in case it's needed later, but we no longer eagerly load batch metadata.
 
 
 	return {
