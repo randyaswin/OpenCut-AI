@@ -608,8 +608,9 @@ export async function executeAction(action: EditorAction): Promise<void> {
 								
 								const animations = { ...(el.animations || {}) };
 								const channels = { ...(animations.channels || {}) };
-								channels.transformX = keyframes.x;
-								channels.transformY = keyframes.y;
+								channels.positionX = keyframes.positionX;
+								channels.positionY = keyframes.positionY;
+								channels.scale = keyframes.scale;
 								animations.channels = channels;
 								
 								editor.timeline.updateElement(el.id, { animations });
