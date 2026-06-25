@@ -408,6 +408,36 @@ export class MediaManager {
 		}
 	}
 
+	async fetchNormalizedAsset({
+		assetId,
+		normalizedUrl,
+	}: {
+		assetId: string;
+		normalizedUrl: string;
+	}): Promise<void> {
+		const asset = this.assets.find((a) => a.id === assetId);
+		if (!asset) return;
+
+		if (asset.normalizedFile) return;
+
+		try {
+			const res = await fetch(normalizedUrl);
+			if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+			const blob = await res.blob();
+			const normalizedFile = new File([blob], asset.name, { type: "video/mp4" });
+			const localUrl = URL.createObjectURL(normalizedFile);
+
+			this.assets = this.assets.map((a) =>
+				a.id === assetId
+					? { ...a, normalizedFile, normalizedUrl: localUrl }
+					: a,
+			);
+			this.notify();
+		} catch (error) {
+			console.error("Failed to fetch normalized asset:", error);
+		}
+	}
+
 	subscribe(listener: () => void): () => void {
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);

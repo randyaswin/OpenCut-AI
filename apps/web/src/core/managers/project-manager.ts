@@ -182,6 +182,13 @@ export class ProjectManager {
 									progress: "Processing...",
 								});
 							}
+
+							if (data.normalizedUrl) {
+								this.editor.media.fetchNormalizedAsset({
+									assetId: asset.id,
+									normalizedUrl: data.normalizedUrl,
+								}).catch(console.error);
+							}
 						}
 					}
 				} catch (e) {

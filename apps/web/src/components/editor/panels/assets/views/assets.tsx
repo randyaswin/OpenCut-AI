@@ -185,6 +185,13 @@ export function MediaView() {
 															updates,
 														});
 													}
+
+													if (data.normalizedUrl) {
+														editor.media.fetchNormalizedAsset({
+															assetId: mediaId,
+															normalizedUrl: data.normalizedUrl,
+														}).catch(console.error);
+													}
 												}
 											}
 										}
@@ -235,6 +242,13 @@ export function MediaView() {
 														id: mediaId,
 														updates,
 													});
+
+													if (data.normalizedUrl) {
+														editor.media.fetchNormalizedAsset({
+															assetId: mediaId,
+															normalizedUrl: data.normalizedUrl,
+														}).catch(console.error);
+													}
 
 													if (data.transcripts && data.transcripts.length > 0) {
 														const transcriptData = data.transcripts[0];
