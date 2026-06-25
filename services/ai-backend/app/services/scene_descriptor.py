@@ -12,6 +12,69 @@ def encode_image(image_path: str) -> str:
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
+def describe_image(file_path: str) -> list:
+    """
+    Uses OpenAI Vision to generate a scene description for a single image.
+    """
+    if not settings.OPENAI_VISION_CAPABLE:
+        logger.info("OpenAI vision is not enabled. Skipping image description.")
+        return []
+    if not settings.OPENAI_API_KEY:
+        logger.warning("OPENAI_API_KEY is missing. Skipping image description.")
+        return []
+
+    scenes = []
+    try:
+        base64_image = encode_image(file_path)
+        with httpx.Client(timeout=settings.OPENAI_TIMEOUT) as client:
+            headers = {
+                "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": settings.OPENAI_MODEL,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Describe this scene in a short, comma-separated list of visual keywords (e.g., 'outdoor, dog playing, sunny, park, grass'). Keep it under 10 words."
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{base64_image}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "max_tokens": 50
+            }
+            
+            resp = client.post(
+                f"{settings.OPENAI_BASE_URL.rstrip('/')}/chat/completions",
+                headers=headers,
+                json=payload
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                description = data['choices'][0]['message']['content'].strip()
+                scenes.append({
+                    "start_time": 0.0,
+                    "end_time": 0.0,
+                    "description": description
+                })
+                logger.info(f"Image description: {description}")
+            else:
+                logger.error(f"Vision API error: {resp.status_code} {resp.text}")
+    except Exception as e:
+        logger.error(f"Error calling Vision API for image: {e}")
+        
+    return scenes
+
 def generate_scene_descriptions(file_path: str, interval_sec: int = 5) -> list:
     """
     Extracts frames from the video at the given interval and uses OpenAI Vision

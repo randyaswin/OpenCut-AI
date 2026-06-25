@@ -77,11 +77,28 @@ function useThinkingMessage(isThinking: boolean) {
 	return THINKING_MESSAGES[index];
 }
 
-function buildProjectContext(editor: ReturnType<typeof useEditor>) {
+async function buildProjectContext(editor: ReturnType<typeof useEditor>) {
 	const tracks = editor.timeline.getTracks();
 	const segments = useTranscriptStore.getState().segments;
 	const chapters = useTranscriptStore.getState().chapters;
 	const project = editor.project.getActiveOrNull();
+
+	const assetIds = editor.media.getAssets().map(a => a.id);
+	let richMetadata = {};
+	if (assetIds.length > 0) {
+		try {
+			const res = await fetch("/api/assets/metadata/batch", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ assetIds }),
+			});
+			if (res.ok) {
+				richMetadata = await res.json();
+			}
+		} catch (e) {
+			console.error("Failed to fetch rich metadata", e);
+		}
+	}
 
 	return {
 		duration: project?.metadata?.duration ?? 0,
@@ -99,6 +116,7 @@ function buildProjectContext(editor: ReturnType<typeof useEditor>) {
 		segmentCount: segments.length,
 		chapterCount: chapters.length,
 		settings: project?.settings,
+		mediaLibrary: richMetadata,
 	};
 }
 
@@ -492,7 +510,7 @@ export function AIStudioView() {
 					prompt = `${prompt}\n\nTranscript:\n${fullText}`;
 				}
 			} else if (mode === "chat") {
-				const context = buildProjectContext(editor);
+				const context = await buildProjectContext(editor);
 				prompt = `Goal: ${prompt}\n\nCurrent project state:\n${JSON.stringify(context, null, 2)}`;
 				systemPrompt = COPILOT_SYSTEM_PROMPT;
 			}

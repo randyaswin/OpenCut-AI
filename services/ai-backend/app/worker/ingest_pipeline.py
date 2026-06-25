@@ -98,6 +98,11 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
     except Exception as e:
         logger.error(f"Normalization failed: {e}")
 
+    is_image = False
+    format_name = results.get("metadata", {}).get("format", {}).get("format_name", "")
+    if "image" in format_name or "png" in format_name or "mjpeg" in format_name or "jpeg" in format_name:
+        is_image = True
+
     # 0.5. Generate Thumbnail (if video)
     has_video = False
     for stream in results.get("metadata", {}).get("streams", []):
@@ -105,7 +110,18 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
             has_video = True
             break
 
-    if has_video:
+    if is_image:
+        # For images, we can just use the original file as the thumbnail, or let the frontend handle it
+        # Or copy it to thumbnails dir to have a consistent URL
+        try:
+            thumbnails_dir = os.path.join(settings.GENERATED_DIR, "thumbnails")
+            os.makedirs(thumbnails_dir, exist_ok=True)
+            thumb_path = os.path.join(thumbnails_dir, f"{asset_id}.jpg")
+            shutil.copy2(file_path, thumb_path)
+            results["thumbnail_url"] = f"{settings.BASE_URL.rstrip('/')}/generated/thumbnails/{asset_id}.jpg"
+        except Exception as e:
+            logger.error(f"Thumbnail generation for image failed: {e}")
+    elif has_video:
         try:
             thumbnails_dir = os.path.join(settings.GENERATED_DIR, "thumbnails")
             os.makedirs(thumbnails_dir, exist_ok=True)
@@ -163,15 +179,16 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
     if job:
         job.meta['progress'] = 'transcribing'
         job.save_meta()
-    try:
-        with open(file_path, "rb") as f:
-            with httpx.Client(timeout=300) as client:
-                files = {"file": (os.path.basename(file_path), f, "video/mp4")}
-                resp = client.post(f"{settings.WHISPER_SERVICE_URL}/transcribe", files=files)
-                if resp.status_code == 200:
-                    results["transcripts"] = resp.json()
-    except Exception as e:
-        logger.error(f"Transcription failed: {e}")
+    if not is_image:
+        try:
+            with open(file_path, "rb") as f:
+                with httpx.Client(timeout=300) as client:
+                    files = {"file": (os.path.basename(file_path), f, "video/mp4")}
+                    resp = client.post(f"{settings.WHISPER_SERVICE_URL}/transcribe", files=files)
+                    if resp.status_code == 200:
+                        results["transcripts"] = resp.json()
+        except Exception as e:
+            logger.error(f"Transcription failed: {e}")
 
     # 3. Object Detection (YOLO)
     if job:
@@ -195,24 +212,36 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
             
         vid_stride = max(1, math.floor(fps))  # 1 frame per second
         
-        # Run inference on video
+        # Run inference on video or image
         detection_results = []
-        # stream=True returns a generator, keeping memory low
-        for i, res in enumerate(model(file_path, stream=True, vid_stride=vid_stride, verbose=False)):
-            timestamp = i * (vid_stride / fps)
-            
-            # Extract unique classes found in this frame
+        if is_image:
+            res = model(file_path, verbose=False)[0]
             boxes = res.boxes
             if boxes is not None and len(boxes) > 0:
                 class_ids = boxes.cls.int().tolist()
                 class_names = [model.names[cid] for cid in class_ids]
                 unique_classes = list(set(class_names))
-                
-                # Store frame level summary
                 detection_results.append({
-                    "timestamp": timestamp,
+                    "timestamp": 0.0,
                     "classes": unique_classes
                 })
+        else:
+            # stream=True returns a generator, keeping memory low
+            for i, res in enumerate(model(file_path, stream=True, vid_stride=vid_stride, verbose=False)):
+                timestamp = i * (vid_stride / fps)
+                
+                # Extract unique classes found in this frame
+                boxes = res.boxes
+                if boxes is not None and len(boxes) > 0:
+                    class_ids = boxes.cls.int().tolist()
+                    class_names = [model.names[cid] for cid in class_ids]
+                    unique_classes = list(set(class_names))
+                    
+                    # Store frame level summary
+                    detection_results.append({
+                        "timestamp": timestamp,
+                        "classes": unique_classes
+                    })
         
         results["objects"] = detection_results
         logger.info(f"Object detection completed: {len(detection_results)} frames with objects.")
@@ -224,8 +253,11 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
         job.meta['progress'] = 'scene_description'
         job.save_meta()
     try:
-        from app.services.scene_descriptor import generate_scene_descriptions
-        results["scenes"] = generate_scene_descriptions(file_path, interval_sec=5)
+        from app.services.scene_descriptor import generate_scene_descriptions, describe_image
+        if is_image:
+            results["scenes"] = describe_image(file_path)
+        else:
+            results["scenes"] = generate_scene_descriptions(file_path, interval_sec=5)
     except Exception as e:
         logger.error(f"Scene description failed: {e}")
 
