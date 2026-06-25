@@ -67,12 +67,14 @@ export function useCopilot() {
 					COPILOT_SYSTEM_PROMPT,
 				);
 
-				const jsonMatch = response.response.match(/\{[\s\S]*\}/);
-				if (!jsonMatch) {
+				const blockMatch = response.response.match(/```(?:json\s+copilot-plan|json)\s*([\s\S]*?)\s*```/);
+				const jsonStr = blockMatch ? blockMatch[1] : response.response.match(/\{[\s\S]*\}/)?.[0];
+				
+				if (!jsonStr) {
 					throw new Error("AI did not return a valid plan");
 				}
 
-				const parsed = JSON.parse(jsonMatch[0]);
+				const parsed = JSON.parse(jsonStr);
 				const steps: CopilotStep[] = (parsed.steps ?? []).map(
 					(s: any, i: number) => ({
 						id: s.id ?? `step-${i + 1}`,

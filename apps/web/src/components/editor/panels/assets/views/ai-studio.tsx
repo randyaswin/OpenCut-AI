@@ -22,6 +22,9 @@ import { useAIStatus } from "@/hooks/use-ai-status";
 import { useAIStore } from "@/stores/ai-store";
 import { useTranscriptStore } from "@/stores/transcript-store";
 import { toast } from "sonner";
+import { useEditor } from "@/hooks/use-editor";
+import { COPILOT_SYSTEM_PROMPT, type CopilotPlan } from "@/lib/copilot/copilot-types";
+import { executeAction, previewAction } from "@/lib/ai-action-executor";
 import { TemplatePanel } from "@/components/editor/ai/template-panel";
 import { BRollSuggestionsPanel } from "@/components/editor/ai/broll-suggestions-panel";
 import { YouTubeReelsPanel } from "@/components/editor/youtube/youtube-reels-panel";
@@ -72,6 +75,106 @@ function useThinkingMessage(isThinking: boolean) {
 	}, [isThinking]);
 
 	return THINKING_MESSAGES[index];
+}
+
+function buildProjectContext(editor: ReturnType<typeof useEditor>) {
+	const tracks = editor.timeline.getTracks();
+	const segments = useTranscriptStore.getState().segments;
+	const chapters = useTranscriptStore.getState().chapters;
+	const project = editor.project.getActiveOrNull();
+
+	return {
+		duration: project?.metadata?.duration ?? 0,
+		trackCount: tracks.length,
+		tracks: tracks.map((t) => ({
+			type: t.type,
+			elementCount: t.elements.length,
+			elements: t.elements.map((el) => ({
+				type: el.type,
+				name: (el as any).name ?? "",
+				startTime: el.startTime,
+				duration: el.duration,
+			})),
+		})),
+		segmentCount: segments.length,
+		chapterCount: chapters.length,
+		settings: project?.settings,
+	};
+}
+
+function CopilotPlanBlock({ planStr }: { planStr: string }) {
+	const [isExecuting, setIsExecuting] = useState(false);
+	const [status, setStatus] = useState<"pending" | "running" | "completed" | "error">("pending");
+	
+	let plan: CopilotPlan | null = null;
+	try {
+		plan = JSON.parse(planStr);
+	} catch (e) {
+		return <div className="text-red-500 text-xs">Invalid plan format.</div>;
+	}
+
+	if (!plan?.steps?.length) {
+		return null;
+	}
+
+	const handleExecute = async () => {
+		setIsExecuting(true);
+		setStatus("running");
+		try {
+			for (const step of plan!.steps) {
+				if (step.action) {
+					await executeAction(step.action);
+				}
+				await new Promise(r => setTimeout(r, 200));
+			}
+			setStatus("completed");
+			toast.success("Plan executed successfully");
+		} catch (error) {
+			setStatus("error");
+			toast.error("Execution failed", { description: error instanceof Error ? error.message : "Unknown error" });
+		} finally {
+			setIsExecuting(false);
+		}
+	};
+
+	return (
+		<div className="my-3 rounded-lg border bg-card p-3 shadow-sm">
+			<div className="flex items-center justify-between mb-2">
+				<div className="flex items-center gap-1.5">
+					<HugeiconsIcon icon={SparklesIcon} className="size-4 text-primary" />
+					<span className="text-xs font-semibold">Editing Plan</span>
+				</div>
+				<span className="text-[10px] text-muted-foreground">{plan.estimatedTime || "Quick edit"}</span>
+			</div>
+			
+			<div className="space-y-1.5 mb-3">
+				{plan.steps.map((step, i) => (
+					<div key={i} className="flex items-start gap-2 text-xs bg-muted/30 p-2 rounded">
+						<span className="text-muted-foreground shrink-0 mt-0.5">{i + 1}.</span>
+						<div className="flex-1 min-w-0">
+							<p className="font-medium text-foreground">{step.description}</p>
+							{step.action && (
+								<p className="text-[10px] text-muted-foreground mt-0.5 font-mono truncate">
+									{previewAction(step.action)}
+								</p>
+							)}
+						</div>
+					</div>
+				))}
+			</div>
+
+			<Button 
+				size="sm" 
+				className="w-full text-xs h-7"
+				onClick={handleExecute}
+				disabled={isExecuting || status === "completed"}
+				variant={status === "completed" ? "secondary" : "default"}
+			>
+				{status === "running" && <Spinner className="size-3 mr-2" />}
+				{status === "completed" ? "Executed" : "Execute Plan"}
+			</Button>
+		</div>
+	);
 }
 
 // ----- Types -----
@@ -320,6 +423,7 @@ export function AIStudioView() {
 	const clearMessages = useAIStore((s) => s.clearStudioMessages);
 	const transcriptSegments = useTranscriptStore((s) => s.segments);
 	const hasTranscript = transcriptSegments.length > 0;
+	const editor = useEditor();
 
 	const [mode, setMode] = useState<StudioMode>("chat");
 	const [inputValue, setInputValue] = useState("");
@@ -387,6 +491,10 @@ export function AIStudioView() {
 				if (!prompt.includes(fullText.slice(0, 50))) {
 					prompt = `${prompt}\n\nTranscript:\n${fullText}`;
 				}
+			} else if (mode === "chat") {
+				const context = buildProjectContext(editor);
+				prompt = `Goal: ${prompt}\n\nCurrent project state:\n${JSON.stringify(context, null, 2)}`;
+				systemPrompt = COPILOT_SYSTEM_PROMPT;
 			}
 
 			const result = await aiClient.chatStream(
@@ -734,6 +842,10 @@ export function AIStudioView() {
 													ol: ({ children }) => <ol className="list-decimal pl-4 mb-1.5 space-y-0.5">{children}</ol>,
 													li: ({ children }) => <li>{children}</li>,
 													code: ({ children, className }) => {
+														const isPlan = className?.includes("language-copilot-plan");
+														if (isPlan) {
+															return <CopilotPlanBlock planStr={String(children)} />;
+														}
 														const isBlock = className?.includes("language-");
 														if (isBlock) {
 															return (
