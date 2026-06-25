@@ -98,6 +98,7 @@ Non-Destructive Action Types (AUTO-EXECUTE):
 - AUTO_DUCK
 - COLOR_CORRECT
 - AUTO_REFRAME
+- ADD_MEDIA_TO_TIMELINE
 
 Reasoning (ReAct) & Acting Format:
 When you receive a user request, you should FIRST write out your step-by-step reasoning, analyzing what the user needs and determining the best sequence of actions. You should show this reasoning to the user in normal text/markdown as a conversational response.

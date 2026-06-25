@@ -93,7 +93,14 @@ async function buildProjectContext(editor: ReturnType<typeof useEditor>) {
 				body: JSON.stringify({ assetIds }),
 			});
 			if (res.ok) {
-				richMetadata = await res.json();
+				const raw = await res.json();
+				// Strip out raw ffprobe metadata to prevent overwhelming the LLM
+				Object.keys(raw).forEach((key) => {
+					if (raw[key]) {
+						delete raw[key].metadata;
+					}
+				});
+				richMetadata = raw;
 			}
 		} catch (e) {
 			console.error("Failed to fetch rich metadata", e);
@@ -116,7 +123,18 @@ async function buildProjectContext(editor: ReturnType<typeof useEditor>) {
 		segmentCount: segments.length,
 		chapterCount: chapters.length,
 		settings: project?.settings,
-		mediaLibrary: richMetadata,
+		mediaLibrary: editor.media.getAssets().map((a) => {
+			const rm = richMetadata[a.id] || {};
+			return {
+				id: a.id,
+				name: a.name,
+				type: a.type,
+				duration: a.duration,
+				transcripts: rm.transcripts,
+				detectedObjects: rm.detectedObjects,
+				sceneDescriptions: rm.sceneDescriptions
+			};
+		}),
 	};
 }
 
