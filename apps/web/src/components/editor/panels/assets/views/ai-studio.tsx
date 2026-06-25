@@ -880,52 +880,64 @@ export function AIStudioView() {
 							</div>
 						)}
 
-						{messages.map((msg) => (
-							<div key={msg.id} className="mb-3">
-								{msg.role === "user" ? (
-									<div className="rounded-lg bg-primary text-primary-foreground ml-6 px-3 py-2 text-xs">
-										{msg.content}
+						{messages.map((msg) => {
+							if (msg.role === "user") {
+								return (
+									<div key={msg.id} className="mb-3">
+										<div className="rounded-lg bg-primary text-primary-foreground ml-6 px-3 py-2 text-xs">
+											{msg.content}
+										</div>
 									</div>
-								) : (
+								);
+							}
+
+							// Assistant message: extract copilot plan JSON, hide other JSONs, limit reasoning height
+							const planMatch = msg.content.match(/```(?:json\s+copilot-plan|json)\s*([\s\S]*?)\s*```/);
+							let planStr = "";
+							let textContent = msg.content;
+							
+							if (planMatch && planMatch[1].includes('"steps"')) {
+								planStr = planMatch[1];
+								textContent = textContent.replace(planMatch[0], "");
+							}
+
+							// Strip any other code blocks containing JSON or tool calls
+							textContent = textContent.replace(/```(?:json\s+tool-call|json)[\s\S]*?```/g, "");
+							textContent = textContent.replace(/```json[\s\S]*?```/g, "");
+							textContent = textContent.trim();
+
+							return (
+								<div key={msg.id} className="mb-3">
 									<div className="rounded-lg bg-muted mr-2 px-3 py-2.5">
 										<div className="prose-studio text-xs leading-relaxed">
-											<ReactMarkdown
-												components={{
-													h1: ({ children }) => <h3 className="text-sm font-bold mt-2 mb-1">{children}</h3>,
-													h2: ({ children }) => <h4 className="text-xs font-bold mt-2 mb-1">{children}</h4>,
-													h3: ({ children }) => <h4 className="text-xs font-semibold mt-1.5 mb-0.5">{children}</h4>,
-													p: ({ children }) => <p className="mb-1.5 last:mb-0">{children}</p>,
-													strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
-													em: ({ children }) => <em className="italic">{children}</em>,
-													ul: ({ children }) => <ul className="list-disc pl-4 mb-1.5 space-y-0.5">{children}</ul>,
-													ol: ({ children }) => <ol className="list-decimal pl-4 mb-1.5 space-y-0.5">{children}</ol>,
-													li: ({ children }) => <li>{children}</li>,
-													code: ({ children, className }) => {
-														const isPlan = className?.includes("language-copilot-plan");
-														if (isPlan) {
-															return <CopilotPlanBlock planStr={String(children)} />;
-														}
-														const isBlock = className?.includes("language-");
-														if (isBlock) {
-															return (
-																<pre className="bg-background rounded px-2 py-1.5 my-1.5 overflow-x-auto text-[10px] font-mono">
-																	<code>{children}</code>
-																</pre>
-															);
-														}
-														return (
-															<code className="bg-background rounded px-1 py-0.5 text-[10px] font-mono">{children}</code>
-														);
-													},
-													blockquote: ({ children }) => (
-														<blockquote className="border-l-2 border-primary/40 pl-2 my-1.5 text-muted-foreground italic">
-															{children}
-														</blockquote>
-													),
-												}}
-											>
-												{msg.content}
-											</ReactMarkdown>
+											{textContent && (
+												<div className="max-h-24 overflow-y-auto pr-1 pb-1 mb-2 scrollbar-thin border-b border-border/10">
+													<ReactMarkdown
+														components={{
+															h1: ({ children }) => <h3 className="text-sm font-bold mt-2 mb-1">{children}</h3>,
+															h2: ({ children }) => <h4 className="text-xs font-bold mt-2 mb-1">{children}</h4>,
+															h3: ({ children }) => <h4 className="text-xs font-semibold mt-1.5 mb-0.5">{children}</h4>,
+															p: ({ children }) => <p className="mb-1.5 last:mb-0">{children}</p>,
+															strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+															em: ({ children }) => <em className="italic">{children}</em>,
+															ul: ({ children }) => <ul className="list-disc pl-4 mb-1.5 space-y-0.5">{children}</ul>,
+															ol: ({ children }) => <ol className="list-decimal pl-4 mb-1.5 space-y-0.5">{children}</ol>,
+															li: ({ children }) => <li>{children}</li>,
+															code: ({ children }) => (
+																<code className="bg-background rounded px-1 py-0.5 text-[10px] font-mono">{children}</code>
+															),
+															blockquote: ({ children }) => (
+																<blockquote className="border-l-2 border-primary/40 pl-2 my-1.5 text-muted-foreground italic">
+																	{children}
+																</blockquote>
+															),
+														}}
+													>
+														{textContent}
+													</ReactMarkdown>
+												</div>
+											)}
+											{planStr && <CopilotPlanBlock planStr={planStr} />}
 										</div>
 										<div className="flex items-center gap-1 mt-2 pt-1.5 border-t border-border/50">
 											<Button
@@ -948,9 +960,9 @@ export function AIStudioView() {
 											</Button>
 										</div>
 									</div>
-								)}
-							</div>
-						))}
+								</div>
+							);
+						})}
 
 						{isThinking && (
 							<div className="mx-2 my-1">
