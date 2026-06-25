@@ -63,7 +63,7 @@ async def ingest_asset(
             args=(asset_id, file_path, webhook_url),
             job_timeout=3600 # 1 hour max
         )
-        return {"job_id": job.get_id()}
+        return {"job_id": job.id}
     except Exception as e:
         logger.error(f"Failed to enqueue job: {e}")
         raise HTTPException(status_code=500, detail="Failed to enqueue job")
@@ -83,7 +83,7 @@ async def get_ingest_status(job_id: str):
             raise HTTPException(status_code=404, detail="Job not found")
 
         return {
-            "job_id": job.get_id(),
+            "job_id": job.id,
             "status": job.get_status(),
             "progress": job.meta.get("progress", "queued"),
             "result": job.result
