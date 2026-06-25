@@ -70,6 +70,8 @@ services:
     restart: unless-stopped
     ports:
       - "8420:8420"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - OPENCUTAI_OLLAMA_URL=http://ollama:11434
       - OPENCUTAI_PORT=8420
@@ -108,8 +110,6 @@ services:
       - ai_generated:/app/generated
       - ai_ingest_data:/app/ingest_data
     depends_on:
-      ollama:
-        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -125,6 +125,8 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     command: ["rq", "worker", "ingest", "--url", "redis://redis:6379", "--with-scheduler"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - OPENCUTAI_OLLAMA_URL=http://ollama:11434
       - OPENCUTAI_WHISPER_SERVICE_URL=http://whisper-service:8421
