@@ -69,6 +69,7 @@ export const assetMetadata = pgTable("asset_metadata", {
 	status: text("status").default("pending"), // 'pending', 'completed', 'error'
 	metadata: jsonb("metadata"), // EXIF/ffprobe data
 	normalizedUrl: text("normalized_url"), // URL to backend-normalized proxy
+	thumbnailUrl: text("thumbnail_url"), // URL to backend-generated thumbnail
 	createdAt: timestamp("created_at").$defaultFn(() => new Date()).notNull(),
 	updatedAt: timestamp("updated_at").$defaultFn(() => new Date()).notNull(),
 });

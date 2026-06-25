@@ -53,7 +53,21 @@ export class MediaManager {
 	}: {
 		projectId: string;
 		id: string;
-		updates: Partial<Pick<MediaAsset, "label" | "name" | "normalizedFile" | "normalizedUrl">>;
+		updates: Partial<
+			Pick<
+				MediaAsset,
+				| "label"
+				| "name"
+				| "normalizedFile"
+				| "normalizedUrl"
+				| "thumbnailUrl"
+				| "codecCompatible"
+				| "width"
+				| "height"
+				| "duration"
+				| "fps"
+			>
+		>;
 	}): Promise<void> {
 		const index = this.assets.findIndex((a) => a.id === id);
 		if (index === -1) return;

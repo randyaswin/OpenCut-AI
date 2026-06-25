@@ -45,6 +45,8 @@ export async function GET(
 		return NextResponse.json({
 			metadata: metadata.metadata,
 			status: metadata.status,
+			normalizedUrl: metadata.normalizedUrl,
+			thumbnailUrl: metadata.thumbnailUrl,
 			transcripts: assetTranscripts,
 			objects,
 			scenes,

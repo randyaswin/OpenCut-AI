@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     WHISPER_COMPUTE_TYPE: str = "int8"
 
     # File paths
+    BASE_URL: str = "http://localhost:8420"
     GENERATED_DIR: str = str(
         Path(__file__).resolve().parent.parent / "generated"
     )

@@ -53,6 +53,7 @@ export interface MediaAssetData {
 	proxy?: ProxyInfo;
 	needsProxy?: boolean;
 	normalizedUrl?: string;
+	codecCompatible?: boolean;
 }
 
 export type SerializedScene = Omit<TScene, "createdAt" | "updatedAt"> & {

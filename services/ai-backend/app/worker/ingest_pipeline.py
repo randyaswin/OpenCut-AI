@@ -98,6 +98,42 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
     except Exception as e:
         logger.error(f"Normalization failed: {e}")
 
+    # 0.5. Generate Thumbnail (if video)
+    has_video = False
+    for stream in results.get("metadata", {}).get("streams", []):
+        if stream.get("codec_type") == "video":
+            has_video = True
+            break
+
+    if has_video:
+        try:
+            thumbnails_dir = os.path.join(settings.GENERATED_DIR, "thumbnails")
+            os.makedirs(thumbnails_dir, exist_ok=True)
+            thumb_path = os.path.join(thumbnails_dir, f"{asset_id}.jpg")
+            
+            try:
+                duration = float(results.get("metadata", {}).get("format", {}).get("duration", 5.0))
+            except:
+                duration = 5.0
+                
+            seek = 1.0 if duration > 1.0 else 0.0
+            
+            # Extract frame at seek time using FFmpeg
+            cmd = [
+                "ffmpeg", "-y", "-ss", str(seek),
+                "-i", file_path,
+                "-vframes", "1",
+                "-q:v", "3",
+                thumb_path
+            ]
+            logger.info(f"Extracting thumbnail: {' '.join(cmd)}")
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if os.path.exists(thumb_path):
+                results["thumbnail_url"] = f"{settings.BASE_URL.rstrip('/')}/generated/thumbnails/{asset_id}.jpg"
+                logger.info(f"Thumbnail generated successfully: {results['thumbnail_url']}")
+        except Exception as e:
+            logger.error(f"Thumbnail extraction failed: {e}")
+
     # 2. Transcription
     if job:
         job.meta['progress'] = 'transcribing'
@@ -173,8 +209,19 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
         job.meta['progress'] = 'sending_webhook'
         job.save_meta()
     try:
+        resolved_webhook_url = webhook_url
+        if "localhost:3100" in webhook_url:
+            resolved_webhook_url = webhook_url.replace("localhost:3100", "web:3000")
+        elif "127.0.0.1:3100" in webhook_url:
+            resolved_webhook_url = webhook_url.replace("127.0.0.1:3100", "web:3000")
+        elif "localhost:3000" in webhook_url:
+            resolved_webhook_url = webhook_url.replace("localhost:3000", "web:3000")
+        elif "127.0.0.1:3000" in webhook_url:
+            resolved_webhook_url = webhook_url.replace("127.0.0.1:3000", "web:3000")
+
+        logger.info(f"Sending webhook to {resolved_webhook_url}")
         with httpx.Client(timeout=30) as client:
-            client.post(webhook_url, json=results)
+            client.post(resolved_webhook_url, json=results)
     except Exception as e:
         logger.error(f"Webhook failed: {e}")
 

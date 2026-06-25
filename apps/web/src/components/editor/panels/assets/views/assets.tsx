@@ -135,12 +135,55 @@ export function MediaView() {
 											progress: "Done",
 											completedAt: Date.now(),
 										});
-										if (status.result?.normalized_url) {
-											editor.media.updateMediaAsset({
-												projectId: activeProject.metadata.id,
-												id: mediaId,
-												updates: { normalizedUrl: status.result.normalized_url }
-											});
+										
+										// Fetch complete ingested metadata
+										try {
+											const metadataRes = await fetch(`/api/assets/${mediaId}/metadata`);
+											if (metadataRes.ok) {
+												const data = await metadataRes.json();
+												if (data) {
+													const updates: any = {};
+													if (data.normalizedUrl) {
+														updates.normalizedUrl = data.normalizedUrl;
+													}
+													if (data.thumbnailUrl) {
+														updates.thumbnailUrl = data.thumbnailUrl;
+													}
+													// If backend ffmpeg/exif got new duration/dimensions, update them!
+													if (data.metadata) {
+														const format = data.metadata.format || {};
+														const videoStream = (data.metadata.streams || []).find((s: any) => s.codec_type === 'video');
+														if (format.duration) {
+															updates.duration = parseFloat(format.duration);
+														}
+														if (videoStream) {
+															if (videoStream.width) updates.width = parseInt(videoStream.width);
+															if (videoStream.height) updates.height = parseInt(videoStream.height);
+															if (videoStream.r_frame_rate) {
+																const [num, den] = videoStream.r_frame_rate.split('/').map(Number);
+																if (den) updates.fps = Math.round(num / den);
+															}
+														}
+													}
+													
+													editor.media.updateMediaAsset({
+														projectId: activeProject.metadata.id,
+														id: mediaId,
+														updates,
+													});
+
+													if (data.transcripts && data.transcripts.length > 0) {
+														const transcriptData = data.transcripts[0];
+														if (transcriptData && transcriptData.segments) {
+															// import transcript store dynamically or use existing transcript store
+															const { useTranscriptStore } = await import("@/stores/transcript-store");
+															useTranscriptStore.getState().setSegments(transcriptData.segments as any);
+														}
+													}
+												}
+											}
+										} catch (err) {
+											console.error("Failed to fetch full asset metadata after ingest", err);
 										}
 									} else if (status.status === "failed") {
 										clearInterval(pollInterval);
@@ -337,6 +380,10 @@ function MediaAssetDraggable({
 		asset: MediaAsset;
 		startTime: number;
 	}) => {
+		if (asset.type === "video" && asset.codecCompatible === false && !asset.normalizedUrl) {
+			toast.warning("Video codec is incompatible and normalization is still in progress. Please wait until ingestion finishes.");
+			return;
+		}
 		const duration =
 			asset.duration ?? TIMELINE_CONSTANTS.DEFAULT_ELEMENT_DURATION;
 		const element = buildElementFromMedia({

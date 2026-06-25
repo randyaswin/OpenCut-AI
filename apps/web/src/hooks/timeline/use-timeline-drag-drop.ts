@@ -284,6 +284,11 @@ export function useTimelineDragDrop({
 			const mediaAsset = mediaAssets.find((m) => m.id === dragData.id);
 			if (!mediaAsset) return;
 
+			if (mediaAsset.type === "video" && mediaAsset.codecCompatible === false && !mediaAsset.normalizedUrl) {
+				toast.warning("Video codec is incompatible and normalization is still in progress. Please wait until ingestion finishes.");
+				return;
+			}
+
 			const trackType: TrackType =
 				dragData.mediaType === "audio" ? "audio" : "video";
 
