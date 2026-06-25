@@ -138,6 +138,7 @@ services:
       - NEXT_PUBLIC_SITE_URL=http://web:3000
     volumes:
       - ai_models:/app/models
+      - ai_generated:/app/generated
       - ai_ingest_data:/app/ingest_data
     depends_on:
       redis:
