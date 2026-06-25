@@ -441,6 +441,7 @@ export function AIStudioView() {
 	const [mode, setMode] = useState<StudioMode>("chat");
 	const [inputValue, setInputValue] = useState("");
 	const [isThinking, setIsThinking] = useState(false);
+	const [agentStatus, setAgentStatus] = useState("");
 	const thinkingMessage = useThinkingMessage(isThinking);
 	const [selectedWorkflow, setSelectedWorkflow] = useState<string | null>(
 		null,
@@ -538,6 +539,7 @@ export function AIStudioView() {
 
 				let lastTurn = 1;
 				let accumulatedContent = "";
+				setAgentStatus("Starting agent loop...");
 				const loopResult = await runAgentLoop({
 					goal: prompt,
 					systemPrompt,
@@ -545,6 +547,7 @@ export function AIStudioView() {
 					onToken: (token, turn) => {
 						lastTurn = turn;
 						accumulatedContent += token;
+						setAgentStatus(`Generating reasoning (turn ${turn}/15)...`);
 						if (!messageAdded) {
 							addMessage({
 								id: assistantId,
@@ -558,8 +561,9 @@ export function AIStudioView() {
 					},
 					onToolCall: (toolName, params, turn) => {
 						lastTurn = turn;
-						const toolMessage = `\n\n> 🛠️ **Tool Call (Turn ${turn}/8):** Running \`${toolName}\`... \n\n`;
+						const toolMessage = `\n\n> 🛠️ **Tool Call (Turn ${turn}/15):** Running \`${toolName}\`... \n\n`;
 						accumulatedContent += toolMessage;
+						setAgentStatus(`Running tool ${toolName} (turn ${turn}/15)...`);
 						if (!messageAdded) {
 							addMessage({
 								id: assistantId,
@@ -571,7 +575,7 @@ export function AIStudioView() {
 							updateMessage(assistantId, accumulatedContent);
 						}
 					},
-					maxIterations: 8,
+					maxIterations: 15,
 				});
 
 				const finalContent = loopResult.rawOutput || "No plan was generated.";
@@ -600,6 +604,7 @@ export function AIStudioView() {
 			}
 		} finally {
 			setIsThinking(false);
+			setAgentStatus("");
 		}
 	}, [inputValue, isThinking, isConnected, mode, hasTranscript, transcriptSegments, addMessage, updateMessage]);
 
@@ -970,7 +975,7 @@ export function AIStudioView() {
 									<div className="flex items-center gap-2">
 										<Spinner className="size-3 text-primary/60" />
 										<span className="text-[11px] text-primary/70 font-medium animate-pulse">
-											{thinkingMessage}
+											{agentStatus || thinkingMessage}
 										</span>
 									</div>
 								</div>
