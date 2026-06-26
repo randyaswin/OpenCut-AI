@@ -21,24 +21,22 @@ def extract_metadata(file_path: str) -> dict:
         logger.error(f"Error extracting metadata: {e}")
         return {}
 
-def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
+def run_normalization_pipeline(asset_id: str, file_path: str, webhook_url: str):
     """
-    RQ worker function that runs the full ingest pipeline for an asset.
+    RQ worker function that runs format normalization and thumbnail generation.
     """
     job = get_current_job()
     if job:
         job.meta['progress'] = 'starting'
         job.save_meta()
 
-    logger.info(f"Starting ingest pipeline for asset {asset_id} at {file_path}")
+    logger.info(f"Starting normalization pipeline for asset {asset_id} at {file_path}")
 
     results = {
         "asset_id": asset_id,
         "metadata": {},
         "normalized_url": None,
-        "transcripts": None,
-        "objects": [],
-        "scenes": []
+        "thumbnail_url": None,
     }
 
     # 1. Extract EXIF/Metadata
@@ -103,8 +101,6 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
             break
 
     if is_image:
-        # For images, we can just use the original file as the thumbnail, or let the frontend handle it
-        # Or copy it to thumbnails dir to have a consistent URL
         try:
             thumbnails_dir = os.path.join(settings.GENERATED_DIR, "thumbnails")
             os.makedirs(thumbnails_dir, exist_ok=True)
@@ -126,7 +122,6 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
                 
             seek = 1.0 if duration > 1.0 else 0.0
             
-            # Extract frame at seek time using FFmpeg
             cmd = [
                 "ffmpeg", "-y", "-ss", str(seek),
                 "-i", file_path,
@@ -142,7 +137,7 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
         except Exception as e:
             logger.error(f"Thumbnail extraction failed: {e}")
 
-    # 0.6. Send early webhook notification for normalization & thumbnail
+    # Send early webhook notification for normalization & thumbnail
     try:
         resolved_webhook_url = webhook_url
         if "localhost:3100" in webhook_url:
@@ -154,7 +149,7 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
         elif "127.0.0.1:3000" in webhook_url:
             resolved_webhook_url = webhook_url.replace("127.0.0.1:3000", "web:3000")
 
-        logger.info(f"Sending early normalization webhook to {resolved_webhook_url}")
+        logger.info(f"Sending normalization webhook to {resolved_webhook_url}")
         early_results = {
             "asset_id": asset_id,
             "metadata": results["metadata"],
@@ -165,7 +160,43 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
         with httpx.Client(timeout=30) as client:
             client.post(resolved_webhook_url, json=early_results)
     except Exception as e:
-        logger.error(f"Early webhook failed: {e}")
+        logger.error(f"Normalization webhook failed: {e}")
+
+    # Enqueue heavy AI analysis job
+    if job and job.connection:
+        from rq import Queue
+        q = Queue("ingest", connection=job.connection)
+        q.enqueue(
+            run_analysis_pipeline,
+            args=(asset_id, file_path, webhook_url, results["metadata"], is_image),
+            job_id=f"analyze-{asset_id}",
+            job_timeout=3600
+        )
+
+    if job:
+        job.meta['progress'] = 'completed'
+        job.save_meta()
+    return results
+
+
+def run_analysis_pipeline(asset_id: str, file_path: str, webhook_url: str, metadata: dict, is_image: bool):
+    """
+    RQ worker function that runs heavy AI processes: transcription, object detection, and scene descriptions.
+    """
+    job = get_current_job()
+    if job:
+        job.meta['progress'] = 'starting_analysis'
+        job.save_meta()
+
+    logger.info(f"Starting AI analysis pipeline for asset {asset_id}")
+
+    results = {
+        "asset_id": asset_id,
+        "metadata": metadata,
+        "transcripts": None,
+        "objects": [],
+        "scenes": []
+    }
 
     # 2. Transcription
     if job:
@@ -194,9 +225,8 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
         model = YOLO("yolov8n.pt")
         
         # Determine stride (e.g. 1 frame every 1 second)
-        # Using 30 as a safe default for ~30fps video if metadata fails
         try:
-            fps_str = results["metadata"]["streams"][0].get("r_frame_rate", "30/1")
+            fps_str = metadata["streams"][0].get("r_frame_rate", "30/1")
             num, den = map(int, fps_str.split('/'))
             fps = num / den if den != 0 else 30
         except:
@@ -268,9 +298,12 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
         elif "127.0.0.1:3000" in webhook_url:
             resolved_webhook_url = webhook_url.replace("127.0.0.1:3000", "web:3000")
 
-        logger.info(f"Sending webhook to {resolved_webhook_url}")
+        logger.info(f"Sending final analysis webhook to {resolved_webhook_url}")
         with httpx.Client(timeout=30) as client:
-            client.post(resolved_webhook_url, json=results)
+            client.post(resolved_webhook_url, json={
+                **results,
+                "status": "completed"
+            })
     except Exception as e:
         logger.error(f"Webhook failed: {e}")
 

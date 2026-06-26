@@ -129,6 +129,8 @@ services:
       context: ./services/ai-backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    deploy:
+      replicas: 2
     command: ["rq", "worker", "ingest", "--url", "redis://redis:6379", "--with-scheduler"]
     extra_hosts:
       - "host.docker.internal:host-gateway"

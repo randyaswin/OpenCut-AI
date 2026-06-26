@@ -7,7 +7,7 @@ from rq import Queue
 from redis import Redis
 
 from app.config import settings
-from app.worker.ingest_pipeline import run_ingest_pipeline
+from app.worker.ingest_pipeline import run_normalization_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ async def ingest_asset(
                 pass
 
         job = q.enqueue(
-            run_ingest_pipeline,
+            run_normalization_pipeline,
             args=(asset_id, file_path, webhook_url),
             job_id=asset_id,
             job_timeout=3600 # 1 hour max
