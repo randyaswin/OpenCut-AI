@@ -483,6 +483,91 @@ class LLMBackend:
 
         return await self._ollama_chat(messages, model, temperature)
 
+    async def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        model: str | None = None,
+        temperature: float | None = None,
+    ) -> AsyncIterator[str]:
+        """Multi-turn streaming chat — routes to TurboQuant, OpenAI, or Ollama."""
+        if await self._should_use_turboquant():
+            try:
+                logger.debug("Routing chat_stream to TurboQuant")
+                async with httpx.AsyncClient(timeout=httpx.Timeout(300, connect=10.0)) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{self.turboquant_url}/v1/chat/completions",
+                        json={
+                            "model": model,
+                            "messages": messages,
+                            "max_tokens": 2048,
+                            "temperature": temperature if temperature is not None else 0.7,
+                            "stream": True,
+                        },
+                    ) as resp:
+                        resp.raise_for_status()
+                        async for line in resp.aiter_lines():
+                            if not line or not line.startswith("data: "):
+                                continue
+                            data_str = line[6:]
+                            if data_str.strip() == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(data_str)
+                                delta = data.get("choices", [{}])[0].get("delta", {})
+                                token = delta.get("content", "")
+                                if token:
+                                    yield token
+                            except (json.JSONDecodeError, IndexError):
+                                continue
+                return
+            except Exception:
+                logger.warning("TurboQuant chat_stream failed, falling back to next available backend")
+                self._tq_available = False
+
+        if self._should_use_openai():
+            try:
+                logger.debug("Routing chat_stream to OpenAI")
+                client = self._get_openai_client()
+                async for token in client.chat_completion_stream(
+                    messages=messages, 
+                    temperature=temperature if temperature is not None else 0.7
+                ):
+                    yield token
+                return
+            except Exception as e:
+                if self.backend_mode == "openai":
+                    logger.error(f"OpenAI chat_stream failed: {e}")
+                    raise
+                logger.warning(f"OpenAI chat_stream failed: {e}, falling back to Ollama")
+
+        if self.backend_mode == "openai":
+            raise RuntimeError("OpenAI backend is configured but not available (missing API key or client error).")
+
+        # Ollama stream chat path
+        payload: dict[str, Any] = {
+            "model": model or self.default_model,
+            "messages": messages,
+            "stream": True,
+        }
+        if temperature is not None:
+            payload["options"] = {"temperature": temperature}
+            
+        async with self._ollama_client() as client:
+            async with client.stream("POST", "/api/chat", json=payload) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        token = data.get("message", {}).get("content", "")
+                        if token:
+                            yield token
+                    except json.JSONDecodeError:
+                        continue
+
+
     async def check_available(self) -> bool:
         """Check if any LLM backend is available."""
         if await self._is_turboquant_ready():

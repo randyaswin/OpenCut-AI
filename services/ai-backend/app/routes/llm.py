@@ -24,9 +24,11 @@ class SetModelRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str
+    message: str | None = None
+    messages: list[dict[str, str]] | None = None
     system: str | None = None
     model: str | None = None
+
 
 
 class LLMStatusResponse(BaseModel):
@@ -84,18 +86,21 @@ async def chat(request: ChatRequest) -> dict:
             detail="No LLM backend available. Start Ollama or TurboQuant service.",
         )
 
-    system_prompt = request.system or (
-        "You are a helpful video production assistant. "
-        "Help users brainstorm video ideas, write scripts, plan content, "
-        "suggest thumbnails, and improve their video projects. "
-        "Be creative, specific, and actionable. Keep responses concise."
-    )
+    if request.messages:
+        messages = list(request.messages)
+        if request.system and not any(m.get("role") == "system" for m in messages):
+            messages.insert(0, {"role": "system", "content": request.system})
+    else:
+        messages = []
+        if request.system:
+            messages.append({"role": "system", "content": request.system})
+        if request.message:
+            messages.append({"role": "user", "content": request.message})
 
     try:
-        response = await llm_backend.generate(
-            prompt=request.message,
+        response = await llm_backend.chat(
+            messages=messages,
             model=request.model,
-            system=system_prompt,
         )
         return {"response": response}
     except Exception:
@@ -117,19 +122,22 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
             detail="No LLM backend available. Start Ollama or TurboQuant service.",
         )
 
-    system_prompt = request.system or (
-        "You are a helpful video production assistant. "
-        "Help users brainstorm video ideas, write scripts, plan content, "
-        "suggest thumbnails, and improve their video projects. "
-        "Be creative, specific, and actionable. Keep responses concise."
-    )
+    if request.messages:
+        messages = list(request.messages)
+        if request.system and not any(m.get("role") == "system" for m in messages):
+            messages.insert(0, {"role": "system", "content": request.system})
+    else:
+        messages = []
+        if request.system:
+            messages.append({"role": "system", "content": request.system})
+        if request.message:
+            messages.append({"role": "user", "content": request.message})
 
     async def _stream():
         try:
-            async for token in llm_backend.generate_stream(
-                prompt=request.message,
+            async for token in llm_backend.chat_stream(
+                messages=messages,
                 model=request.model,
-                system=system_prompt,
             ):
                 yield json.dumps({"token": token}) + "\n"
             yield json.dumps({"done": True}) + "\n"

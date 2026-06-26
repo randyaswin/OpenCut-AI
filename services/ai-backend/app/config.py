@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = "gpt-4o"
     OPENAI_IMAGE_MODEL: str = "dall-e-3"
     OPENAI_VISION_CAPABLE: bool = False
+    
+    # Unified Backend Selectors
+    TTS_BACKEND: str = "auto"  # "openai", "local", "auto" (tries openai first if api key is present)
+    OPENAI_TTS_MODEL: str = "tts-1"
+    OPENAI_TTS_VOICE: str = "alloy"
+    IMAGE_BACKEND: str = "auto"  # "openai", "local", "auto" (tries openai first if api key is present)
+
 
 
     # Microservice URLs

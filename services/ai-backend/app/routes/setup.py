@@ -262,7 +262,12 @@ _ALLOWED_CONFIG_KEYS = {
     "AI_LLM_BACKEND",
     "AI_COMPUTE_MODE",
     "OLLAMA_DEFAULT_MODEL",
+    "TTS_BACKEND",
+    "OPENAI_TTS_MODEL",
+    "OPENAI_TTS_VOICE",
+    "IMAGE_BACKEND",
 }
+
 
 
 class ConfigUpdateRequest(BaseModel):

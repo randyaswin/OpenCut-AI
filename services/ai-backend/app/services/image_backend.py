@@ -16,7 +16,11 @@ class ImageBackend:
 
     def _should_use_openai(self) -> bool:
         """Determine if we should route to OpenAI for image generation."""
-        # For images, if the user provided an API key, we use OpenAI.
+        if settings.IMAGE_BACKEND == "openai":
+            return True
+        if settings.IMAGE_BACKEND == "local":
+            return False
+        # "auto" or other
         return bool(settings.OPENAI_API_KEY)
 
     def _get_openai_client(self) -> OpenAIClient:
@@ -45,13 +49,17 @@ class ImageBackend:
         client = self._get_openai_client()
         
         # OpenAI dall-e-3 expects sizes like "1024x1024", "1024x1792"
-        aspect_ratio = params.width / params.height
-        if aspect_ratio > 1.2:
-            size_str = "1792x1024"
-        elif aspect_ratio < 0.8:
-            size_str = "1024x1792"
+        if "dall-e" in settings.OPENAI_IMAGE_MODEL.lower():
+            aspect_ratio = params.width / params.height
+            if aspect_ratio > 1.2:
+                size_str = "1792x1024"
+            elif aspect_ratio < 0.8:
+                size_str = "1024x1792"
+            else:
+                size_str = "1024x1024"
         else:
-            size_str = "1024x1024"
+            # Custom OpenAI-compatible endpoints often accept arbitrary dimensions
+            size_str = f"{params.width}x{params.height}"
 
         resp = await client.generate_image(
             prompt=params.prompt,
