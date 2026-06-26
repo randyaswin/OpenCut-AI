@@ -61,6 +61,7 @@ export type EditorActionType =
 	| "COLOR_CORRECT"
 	| "AUTO_REFRAME"
 	| "EXPORT_PROJECT"
+	| "ADD_EFFECT"
 	| "ADD_MEDIA_TO_TIMELINE";
 
 export interface EditorAction {

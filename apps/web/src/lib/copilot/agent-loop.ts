@@ -222,6 +222,20 @@ async function executeTool(tool: string, params: any, editor: any): Promise<stri
 		}
 	}
 
+	if (tool === "EXECUTE_ACTION") {
+		if (!params || !params.type) {
+			return "Error: missing 'type' parameter for EXECUTE_ACTION.";
+		}
+		try {
+			const { executeAction } = require("@/lib/ai-action-executor");
+			// executeAction expects { type: "...", params: {...} }
+			await executeAction(params);
+			return `Successfully executed ${params.type}. You can use GET_TIMELINE_STATE to verify the changes.`;
+		} catch (err: any) {
+			return `Error executing action ${params.type}: ${err.message || err}`;
+		}
+	}
+
 	return `Unknown tool: ${tool}`;
 }
 

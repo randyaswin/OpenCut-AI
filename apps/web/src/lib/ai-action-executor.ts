@@ -81,6 +81,8 @@ export function previewAction(action: EditorAction): string {
 			return `Auto-duck music under speech (${action.params.duckAmount ?? -12}dB)`;
 		case "COLOR_CORRECT":
 			return `Apply "${action.params.profile ?? "auto"}" color correction`;
+		case "ADD_EFFECT":
+			return `Add "${action.params.effectType ?? "filter"}" effect to timeline clips`;
 		case "AUTO_REFRAME":
 			return `Auto-reframe to ${action.params.targetRatio ?? "9:16"}${action.params.subject ? ` following "${action.params.subject}"` : ""}`;
 		case "ADD_MEDIA_TO_TIMELINE":
@@ -371,6 +373,28 @@ export async function executeAction(action: EditorAction): Promise<void> {
 								trackId: track.id,
 								elementId: el.id,
 								effectType: "color_adjust",
+							});
+						}
+					}
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "ADD_EFFECT": {
+			try {
+				const editor = getEditorCore();
+				const tracks = editor.timeline.getTracks();
+				const effectType = (action.params.effectType as string) ?? "filter";
+				for (const track of tracks) {
+					for (const el of track.elements) {
+						if (el.type === "video" || el.type === "image") {
+							editor.timeline.addClipEffect({
+								trackId: track.id,
+								elementId: el.id,
+								effectType: effectType,
 							});
 						}
 					}

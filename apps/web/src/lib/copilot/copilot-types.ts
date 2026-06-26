@@ -156,6 +156,7 @@ When calling a tool, output EXACTLY this format — one code fence per turn, no 
 | GET_TRANSCRIPT | Full Whisper transcript segments for an asset | \`{"assetId": "string"}\` |
 | ANALYZE_AUDIO | Silence and loudness analysis for an audio/video asset | \`{"assetId": "string"}\` |
 | SUGGEST_MUSIC | Search Freesound for background music by mood/keyword | \`{"mood": "string"}\` |
+| EXECUTE_ACTION | Immediately execute a video editing action (see ACTION TYPES below) | \`{"type": "ACTION_TYPE", "params": {}}\` |
 
 # COPILOT-PLAN OUTPUT FORMAT
 
