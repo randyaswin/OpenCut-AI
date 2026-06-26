@@ -57,13 +57,14 @@ class ScoreBatchRequest(BaseModel):
 class EngagementScore(BaseModel):
     composite: float = 0.0
     grade: str = "F"
-    hook: Dict[str, Any] = {}
-    curiosity: Dict[str, Any] = {}
-    energy: Dict[str, Any] = {}
-    audio_sync: Dict[str, Any] = {}
-    face_presence: Dict[str, Any] = {}
-    emotional_arc: Dict[str, Any] = {}
-    virality: Dict[str, Any] = {}
+    hook: HookScore = Field(default_factory=HookScore)
+    curiosity: CuriosityScore = Field(default_factory=CuriosityScore)
+    energy: EnergyScore = Field(default_factory=EnergyScore)
+    audio_sync: AudioSyncScore = Field(default_factory=AudioSyncScore)
+    face_presence: FacePresenceScore = Field(default_factory=FacePresenceScore)
+    emotional_arc: EmotionalArcScore = Field(default_factory=EmotionalArcScore)
+    virality: ViralityScore = Field(default_factory=ViralityScore)
+    suggestions: List[EnhancementSuggestion] = Field(default_factory=list)
     
     def to_response(self) -> Dict[str, Any]:
         return self.model_dump()
