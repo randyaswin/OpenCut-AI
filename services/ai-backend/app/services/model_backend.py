@@ -142,7 +142,11 @@ class LLMBackend:
         async with self._ollama_client() as client:
             resp = await client.post("/api/generate", json=payload)
             resp.raise_for_status()
-            return resp.json().get("response", "")
+            try:
+                return resp.json().get("response", "")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse Ollama response as JSON. Raw: {resp.text[:500]}")
+                raise ValueError("Invalid JSON response from Ollama API") from e
 
     async def _ollama_generate_stream(
         self,
@@ -189,7 +193,11 @@ class LLMBackend:
         async with self._ollama_client() as client:
             resp = await client.post("/api/chat", json=payload)
             resp.raise_for_status()
-            return resp.json().get("message", {}).get("content", "")
+            try:
+                return resp.json().get("message", {}).get("content", "")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse Ollama chat response as JSON. Raw: {resp.text[:500]}")
+                raise ValueError("Invalid JSON response from Ollama API") from e
 
     # ── TurboQuant methods ────────────────────────────────────────────
 
@@ -216,7 +224,11 @@ class LLMBackend:
                 },
             )
             resp.raise_for_status()
-            data = resp.json()
+            try:
+                data = resp.json()
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse TurboQuant response as JSON. Raw: {resp.text[:500]}")
+                raise ValueError("Invalid JSON response from TurboQuant API") from e
             choices = data.get("choices", [])
             if choices:
                 return choices[0].get("message", {}).get("content", "")
@@ -239,7 +251,11 @@ class LLMBackend:
                 },
             )
             resp.raise_for_status()
-            data = resp.json()
+            try:
+                data = resp.json()
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse TurboQuant chat response as JSON. Raw: {resp.text[:500]}")
+                raise ValueError("Invalid JSON response from TurboQuant API") from e
             choices = data.get("choices", [])
             if choices:
                 return choices[0].get("message", {}).get("content", "")

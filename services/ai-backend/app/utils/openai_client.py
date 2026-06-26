@@ -72,7 +72,14 @@ class OpenAIClient:
             payload["response_format"] = response_format
             
         resp = await self._post("/chat/completions", payload)
-        return resp.json()
+        text = resp.text
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse OpenAI API response as JSON. Status: {resp.status_code}. Raw: {text[:500]}")
+            if not text.strip():
+                raise ValueError(f"Empty response from API (HTTP {resp.status_code})") from e
+            raise ValueError(f"Invalid JSON response from API: {text[:100]}") from e
 
     async def chat_completion_stream(
         self, 
