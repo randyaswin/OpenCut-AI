@@ -523,6 +523,8 @@ const QUICK_ACTIONS = [
 	{ label: "✨ Enhance audio", prompt: "Denoise and normalize the audio of the active track." },
 ];
 
+const EMPTY_MESSAGES: StudioMessage[] = [];
+
 // ----- Component -----
 
 export function AIStudioView() {
@@ -536,7 +538,7 @@ export function AIStudioView() {
 	const project = editor.project.getActiveOrNull();
 	const projectId = project?.metadata.id ?? "default";
 
-	const messages = useAIStore((s) => s.studioMessages[projectId] || []);
+	const messages = useAIStore((s) => s.studioMessages[projectId] || EMPTY_MESSAGES);
 	const addMessage = useCallback((message: StudioMessage) => {
 		useAIStore.getState().addStudioMessage(projectId, message);
 	}, [projectId]);
