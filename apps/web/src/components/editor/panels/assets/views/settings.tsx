@@ -82,6 +82,14 @@ export function SettingsView() {
 				</Section>
 				<Section>
 					<SectionHeader>
+						<SectionTitle>AI Backends</SectionTitle>
+					</SectionHeader>
+					<SectionContent>
+						<AIBackendsSection />
+					</SectionContent>
+				</Section>
+				<Section>
+					<SectionHeader>
 						<SectionTitle>API Keys</SectionTitle>
 					</SectionHeader>
 					<SectionContent>
@@ -915,6 +923,120 @@ function ComputeModeSelector({
 					</Badge>
 				)}
 			</div>
+		</div>
+	);
+}
+
+// ----- AI Backends Section -----
+
+function AIBackendsSection() {
+	const [config, setConfig] = useState<Record<string, string>>(() => {
+		const saved = loadSavedConfig();
+		return {
+			TTS_BACKEND: String(saved.TTS_BACKEND || "auto"),
+			OPENAI_TTS_MODEL: String(saved.OPENAI_TTS_MODEL || "tts-1"),
+			OPENAI_TTS_VOICE: String(saved.OPENAI_TTS_VOICE || "alloy"),
+			IMAGE_BACKEND: String(saved.IMAGE_BACKEND || "auto"),
+			OPENAI_IMAGE_MODEL: String(saved.OPENAI_IMAGE_MODEL || "dall-e-3"),
+		};
+	});
+
+	const handleUpdate = (key: string, value: string) => {
+		const updates = { [key]: value };
+		saveConfig(updates);
+		setConfig((prev) => ({ ...prev, [key]: value }));
+		aiClient.updateConfig(updates)
+			.then(() => toast.success(`Setting ${key} updated`))
+			.catch(() => toast.error(`Failed to update ${key} on backend`));
+	};
+
+	return (
+		<div className="flex flex-col gap-4">
+			{/* TTS Backend */}
+			<div className="flex flex-col gap-1.5">
+				<Label className="text-xs">TTS Backend</Label>
+				<Select
+					value={config.TTS_BACKEND}
+					onValueChange={(val) => handleUpdate("TTS_BACKEND", val)}
+				>
+					<SelectTrigger className="w-full">
+						<SelectValue placeholder="Select TTS backend" />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="auto">Auto (OpenAI fallback to Local)</SelectItem>
+						<SelectItem value="openai">OpenAI-Compatible API</SelectItem>
+						<SelectItem value="local">Local Coqui TTS</SelectItem>
+					</SelectContent>
+				</Select>
+			</div>
+
+			{/* OpenAI TTS Settings */}
+			{(config.TTS_BACKEND === "openai" || config.TTS_BACKEND === "auto") && (
+				<div className="flex flex-col gap-3 pl-3 border-l-2 border-primary/20">
+					<div className="flex flex-col gap-1.5">
+						<Label className="text-[11px] text-muted-foreground">OpenAI TTS Model</Label>
+						<input
+							type="text"
+							placeholder="tts-1"
+							value={config.OPENAI_TTS_MODEL}
+							onChange={(e) => handleUpdate("OPENAI_TTS_MODEL", e.target.value)}
+							className="w-full rounded-md border bg-transparent px-2.5 py-1.5 text-[11px] outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/40 font-mono"
+						/>
+					</div>
+					<div className="flex flex-col gap-1.5">
+						<Label className="text-[11px] text-muted-foreground">OpenAI TTS Voice</Label>
+						<Select
+							value={config.OPENAI_TTS_VOICE}
+							onValueChange={(val) => handleUpdate("OPENAI_TTS_VOICE", val)}
+						>
+							<SelectTrigger className="w-full">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{["alloy", "echo", "fable", "onyx", "nova", "shimmer"].map((v) => (
+									<SelectItem key={v} value={v}>
+										{v}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</div>
+				</div>
+			)}
+
+			{/* Image Backend */}
+			<div className="flex flex-col gap-1.5">
+				<Label className="text-xs">Image Generation Backend</Label>
+				<Select
+					value={config.IMAGE_BACKEND}
+					onValueChange={(val) => handleUpdate("IMAGE_BACKEND", val)}
+				>
+					<SelectTrigger className="w-full">
+						<SelectValue placeholder="Select image backend" />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="auto">Auto (OpenAI fallback to Local)</SelectItem>
+						<SelectItem value="openai">OpenAI-Compatible API</SelectItem>
+						<SelectItem value="local">Local Stable Diffusion</SelectItem>
+					</SelectContent>
+				</Select>
+			</div>
+
+			{/* OpenAI Image Settings */}
+			{(config.IMAGE_BACKEND === "openai" || config.IMAGE_BACKEND === "auto") && (
+				<div className="flex flex-col gap-3 pl-3 border-l-2 border-primary/20">
+					<div className="flex flex-col gap-1.5">
+						<Label className="text-[11px] text-muted-foreground">OpenAI Image Model</Label>
+						<input
+							type="text"
+							placeholder="dall-e-3"
+							value={config.OPENAI_IMAGE_MODEL}
+							onChange={(e) => handleUpdate("OPENAI_IMAGE_MODEL", e.target.value)}
+							className="w-full rounded-md border bg-transparent px-2.5 py-1.5 text-[11px] outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/40 font-mono"
+						/>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

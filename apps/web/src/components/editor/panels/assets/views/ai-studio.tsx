@@ -34,6 +34,101 @@ import { AutoChaptersPanel } from "@/components/editor/panels/assets/views/auto-
 import { SmartReframePanel } from "@/components/editor/panels/assets/views/smart-reframe";
 import { MotionTrackingPanel } from "@/components/editor/panels/assets/views/motion-tracking";
 import { ABTestingPanel } from "@/components/editor/panels/assets/views/ab-testing";
+import { ChatMessage } from "@/components/editor/ai/chat-message";
+
+function stripJSON(text: string): string {
+	let cleaned = text;
+
+	// 1. Handle unclosed markdown code blocks at the end of the text
+	const lastTripleBacktick = cleaned.lastIndexOf("```");
+	if (lastTripleBacktick !== -1) {
+		const after = cleaned.slice(lastTripleBacktick + 3);
+		if (!after.includes("```")) {
+			// If it's an unclosed code block, check if it's a JSON block or contains JSON-like content
+			if (after.match(/^(?:json|\s*\{|\s*\[)/i) || after.includes('"') || after.includes(':')) {
+				cleaned = cleaned.slice(0, lastTripleBacktick);
+			} else {
+				// Just auto-close it so standard regex can clean it up or process it
+				cleaned += "\n```";
+			}
+		}
+	}
+
+	// 2. Strip closed markdown code blocks that contain JSON or tool calls
+	cleaned = cleaned.replace(/```(?:json\s+[\w-]+|json)?\s*([\s\S]*?)```/g, (match, p1) => {
+		const trimmed = p1.trim();
+		if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+			return "";
+		}
+		if (trimmed.includes('"') && trimmed.includes(':')) {
+			return "";
+		}
+		return match;
+	});
+
+	// 3. Scan for JSON objects/arrays (both closed and unclosed at the end)
+	let result = "";
+	let i = 0;
+	while (i < cleaned.length) {
+		if (cleaned[i] === "{" || cleaned[i] === "[") {
+			const startChar = cleaned[i];
+			const endChar = startChar === "{" ? "}" : "]";
+			let braceCount = 1;
+			let j = i + 1;
+			let inString = false;
+			let escaped = false;
+			
+			while (j < cleaned.length && braceCount > 0) {
+				const char = cleaned[j];
+				if (escaped) {
+					escaped = false;
+				} else if (char === "\\") {
+					escaped = true;
+				} else if (char === '"') {
+					inString = !inString;
+				} else if (!inString) {
+					if (char === startChar) {
+						braceCount++;
+					} else if (char === endChar) {
+						braceCount--;
+					}
+				}
+				j++;
+			}
+			
+			if (braceCount === 0) {
+				// Found a matching closed block. Check if it's JSON
+				const candidate = cleaned.slice(i, j);
+				let isJSON = false;
+				try {
+					JSON.parse(candidate);
+					isJSON = true;
+				} catch {
+					const trimmed = candidate.trim();
+					if (trimmed.includes('"') && trimmed.includes(':')) {
+						isJSON = true;
+					}
+				}
+				if (isJSON) {
+					i = j;
+					continue;
+				}
+			} else {
+				// Unclosed block at the end of the text.
+				// If it contains typical JSON markers (like colons, quotes, or starts with known keys/brackets),
+				// strip it from this point to the end.
+				const remaining = cleaned.slice(i);
+				if (remaining.includes('"') || remaining.includes(':') || remaining.includes(',') || remaining.length > 5) {
+					break; // Stop including anything from i onwards
+				}
+			}
+		}
+		result += cleaned[i];
+		i++;
+	}
+
+	return result.trim();
+}
 
 // ----- Thinking Messages -----
 
@@ -421,6 +516,13 @@ const TRANSCRIPT_PROMPTS = [
 	},
 ];
 
+const QUICK_ACTIONS = [
+	{ label: "🎬 Remove silences", prompt: "Detect and remove silent segments from the timeline." },
+	{ label: "📝 Add subtitles", prompt: "Create and add a subtitle track for the current video." },
+	{ label: "🎵 Add music", prompt: "Search and add a suitable background music track." },
+	{ label: "✨ Enhance audio", prompt: "Denoise and normalize the audio of the active track." },
+];
+
 // ----- Component -----
 
 export function AIStudioView() {
@@ -451,9 +553,108 @@ export function AIStudioView() {
 	);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const thinkingScrollRef = useRef<HTMLDivElement>(null);
 
 	// ── Model name display ──
 	const [activeModel, setActiveModel] = useState("");
+	const [isRecording, setIsRecording] = useState(false);
+	const recognitionRef = useRef<any>(null);
+	const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+	const audioChunksRef = useRef<Blob[]>([]);
+
+	// Auto-resize textarea
+	useEffect(() => {
+		const textarea = inputRef.current;
+		if (!textarea) return;
+		textarea.style.height = "auto";
+		textarea.style.height = `${Math.min(textarea.scrollHeight, 100)}px`;
+	}, [inputValue]);
+
+	const toggleRecording = useCallback(() => {
+		if (isRecording) {
+			if (recognitionRef.current) {
+				recognitionRef.current.stop();
+			}
+			if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+				mediaRecorderRef.current.stop();
+			}
+			setIsRecording(false);
+			return;
+		}
+
+		const SpeechLib = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+		if (SpeechLib) {
+			const rec = new SpeechLib();
+			rec.continuous = false;
+			rec.interimResults = false;
+			rec.lang = "en-US";
+			
+			rec.onstart = () => {
+				setIsRecording(true);
+			};
+			
+			rec.onresult = (event: any) => {
+				const text = event.results[0][0].transcript;
+				if (text) {
+					setInputValue((prev) => (prev ? `${prev} ${text}` : text));
+				}
+			};
+			
+			rec.onerror = (e: any) => {
+				console.error("Speech recognition error", e);
+				setIsRecording(false);
+			};
+			
+			rec.onend = () => {
+				setIsRecording(false);
+			};
+			
+			recognitionRef.current = rec;
+			rec.start();
+		} else {
+			// Fallback: record audio blob & transcribe via backend
+			navigator.mediaDevices.getUserMedia({ audio: true })
+				.then((stream) => {
+					const mediaRecorder = new MediaRecorder(stream);
+					mediaRecorderRef.current = mediaRecorder;
+					audioChunksRef.current = [];
+					
+					mediaRecorder.ondataavailable = (event) => {
+						if (event.data.size > 0) {
+							audioChunksRef.current.push(event.data);
+						}
+					};
+					
+					mediaRecorder.onstop = async () => {
+						const audioBlob = new Blob(audioChunksRef.current, { type: "audio/wav" });
+						const audioFile = new File([audioBlob], "speech.wav", { type: "audio/wav" });
+						setIsThinking(true);
+						try {
+							const res = await aiClient.transcribe(audioFile);
+							if (res && res.segments) {
+								const fullText = res.segments.map((s) => s.text).join(" ").trim();
+								if (fullText) {
+									setInputValue((prev) => (prev ? `${prev} ${fullText}` : fullText));
+								}
+							}
+						} catch (err) {
+							console.error("Transcription error", err);
+							toast.error("Failed to transcribe voice input");
+						} finally {
+							setIsThinking(false);
+						}
+						stream.getTracks().forEach((track) => track.stop());
+					};
+					
+					mediaRecorder.start();
+					setIsRecording(true);
+				})
+				.catch((err) => {
+					console.error("Mic access error", err);
+					toast.error("Could not access microphone");
+				});
+		}
+	}, [isRecording, setIsThinking, setInputValue]);
 
 	useEffect(() => {
 		aiClient.llmStatus().then((data) => {
@@ -468,10 +669,14 @@ export function AIStudioView() {
 		if (scrollRef.current) {
 			scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
 		}
+		if (isThinking && thinkingScrollRef.current) {
+			thinkingScrollRef.current.scrollTop = thinkingScrollRef.current.scrollHeight;
+		}
 	}, [messages, isThinking]);
 
-	const handleSend = useCallback(async () => {
-		const trimmed = inputValue.trim();
+	const handleSend = useCallback(async (overridePrompt?: string) => {
+		const promptValue = overridePrompt ?? inputValue;
+		const trimmed = promptValue.trim();
 		if (!trimmed || isThinking) return;
 
 		if (!isConnected) {
@@ -486,7 +691,9 @@ export function AIStudioView() {
 			role: "user",
 			content: trimmed,
 		});
-		setInputValue("");
+		if (!overridePrompt) {
+			setInputValue("");
+		}
 		setIsThinking(true);
 
 		const assistantId = crypto.randomUUID();
@@ -544,10 +751,11 @@ export function AIStudioView() {
 					goal: prompt,
 					systemPrompt,
 					editor,
+					history: messages.map(m => ({ role: m.role, content: m.content })),
 					onToken: (token, turn) => {
 						lastTurn = turn;
 						accumulatedContent += token;
-						setAgentStatus(`Generating reasoning (turn ${turn}/15)...`);
+						setAgentStatus(`Generating reasoning (turn ${turn}/8)...`);
 						if (!messageAdded) {
 							addMessage({
 								id: assistantId,
@@ -561,9 +769,9 @@ export function AIStudioView() {
 					},
 					onToolCall: (toolName, params, turn) => {
 						lastTurn = turn;
-						const toolMessage = `\n\n> 🛠️ **Tool Call (Turn ${turn}/15):** Running \`${toolName}\`... \n\n`;
+						const toolMessage = `\n\n> 🛠️ **Tool Call (Turn ${turn}/8):** Running \`${toolName}\`... \n\n`;
 						accumulatedContent += toolMessage;
-						setAgentStatus(`Running tool ${toolName} (turn ${turn}/15)...`);
+						setAgentStatus(`Running tool ${toolName} (turn ${turn}/8)...`);
 						if (!messageAdded) {
 							addMessage({
 								id: assistantId,
@@ -575,7 +783,7 @@ export function AIStudioView() {
 							updateMessage(assistantId, accumulatedContent);
 						}
 					},
-					maxIterations: 15,
+					maxIterations: 8,
 				});
 
 				const finalContent = loopResult.rawOutput || "No plan was generated.";
@@ -606,7 +814,22 @@ export function AIStudioView() {
 			setIsThinking(false);
 			setAgentStatus("");
 		}
-	}, [inputValue, isThinking, isConnected, mode, hasTranscript, transcriptSegments, addMessage, updateMessage]);
+	}, [inputValue, isThinking, isConnected, mode, hasTranscript, transcriptSegments, addMessage, updateMessage, editor, messages]);
+
+	const handleRetry = useCallback(async () => {
+		const userMsgs = messages.filter((m) => m.role === "user");
+		if (userMsgs.length === 0) return;
+		const lastUserMsg = userMsgs[userMsgs.length - 1];
+
+		const userIndex = messages.findIndex((m) => m.id === lastUserMsg.id);
+		if (userIndex === -1) return;
+
+		const kept = messages.slice(0, userIndex + 1);
+		useAIStore.setState({ studioMessages: kept });
+
+		handleSend(lastUserMsg.content);
+	}, [messages, handleSend]);
+
 
 	const handleKeyDown = useCallback(
 		(event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -885,89 +1108,16 @@ export function AIStudioView() {
 							</div>
 						)}
 
-						{messages.map((msg) => {
-							if (msg.role === "user") {
-								return (
-									<div key={msg.id} className="mb-3">
-										<div className="rounded-lg bg-primary text-primary-foreground ml-6 px-3 py-2 text-xs">
-											{msg.content}
-										</div>
-									</div>
-								);
-							}
-
-							// Assistant message: extract copilot plan JSON, hide other JSONs, limit reasoning height
-							const planMatch = msg.content.match(/```(?:json\s+copilot-plan|json)\s*([\s\S]*?)\s*```/);
-							let planStr = "";
-							let textContent = msg.content;
-							
-							if (planMatch && planMatch[1].includes('"steps"')) {
-								planStr = planMatch[1];
-								textContent = textContent.replace(planMatch[0], "");
-							}
-
-							// Strip any other code blocks containing JSON or tool calls
-							textContent = textContent.replace(/```(?:json\s+tool-call|json)[\s\S]*?```/g, "");
-							textContent = textContent.replace(/```json[\s\S]*?```/g, "");
-							textContent = textContent.trim();
-
-							return (
-								<div key={msg.id} className="mb-3">
-									<div className="rounded-lg bg-muted mr-2 px-3 py-2.5">
-										<div className="prose-studio text-xs leading-relaxed">
-											{textContent && (
-												<div className="max-h-24 overflow-y-auto pr-1 pb-1 mb-2 scrollbar-thin border-b border-border/10">
-													<ReactMarkdown
-														components={{
-															h1: ({ children }) => <h3 className="text-sm font-bold mt-2 mb-1">{children}</h3>,
-															h2: ({ children }) => <h4 className="text-xs font-bold mt-2 mb-1">{children}</h4>,
-															h3: ({ children }) => <h4 className="text-xs font-semibold mt-1.5 mb-0.5">{children}</h4>,
-															p: ({ children }) => <p className="mb-1.5 last:mb-0">{children}</p>,
-															strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
-															em: ({ children }) => <em className="italic">{children}</em>,
-															ul: ({ children }) => <ul className="list-disc pl-4 mb-1.5 space-y-0.5">{children}</ul>,
-															ol: ({ children }) => <ol className="list-decimal pl-4 mb-1.5 space-y-0.5">{children}</ol>,
-															li: ({ children }) => <li>{children}</li>,
-															code: ({ children }) => (
-																<code className="bg-background rounded px-1 py-0.5 text-[10px] font-mono">{children}</code>
-															),
-															blockquote: ({ children }) => (
-																<blockquote className="border-l-2 border-primary/40 pl-2 my-1.5 text-muted-foreground italic">
-																	{children}
-																</blockquote>
-															),
-														}}
-													>
-														{textContent}
-													</ReactMarkdown>
-												</div>
-											)}
-											{planStr && <CopilotPlanBlock planStr={planStr} />}
-										</div>
-										<div className="flex items-center gap-1 mt-2 pt-1.5 border-t border-border/50">
-											<Button
-												variant="ghost"
-												size="sm"
-												className="h-5 px-1.5 text-[10px] text-muted-foreground hover:text-foreground gap-1"
-												onClick={() => {
-													saveIdea(msg.content);
-													toast.success("Idea saved", {
-														description: "View it in the Ideas tab.",
-														action: {
-															label: "View",
-															onClick: () => setMode("ideas"),
-														},
-													});
-												}}
-											>
-												<HugeiconsIcon icon={Bookmark01Icon} className="size-3" />
-												Save idea
-											</Button>
-										</div>
-									</div>
-								</div>
-							);
-						})}
+						{messages.map((msg, index) => (
+							<ChatMessage
+								key={msg.id}
+								message={msg as any}
+								isThinking={isThinking && index === messages.length - 1}
+								thinkingScrollRef={thinkingScrollRef}
+								onRetry={handleRetry}
+								saveIdea={saveIdea}
+							/>
+						))}
 
 						{isThinking && (
 							<div className="mx-2 my-1">
@@ -984,7 +1134,24 @@ export function AIStudioView() {
 					</div>
 
 					{/* Input — ALWAYS at bottom, outside scroll */}
-					<div className="border-t px-2 py-2 shrink-0 bg-background">
+					<div className="border-t px-2 py-2 shrink-0 bg-background space-y-1.5">
+						{/* Quick suggestions */}
+						<div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none scroll-smooth">
+							{QUICK_ACTIONS.map((action) => (
+								<button
+									key={action.label}
+									type="button"
+									onClick={() => {
+										setInputValue(action.prompt);
+										inputRef.current?.focus();
+									}}
+									className="shrink-0 rounded-full border bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground hover:bg-primary/5 hover:text-primary hover:border-primary/20 transition-all font-medium"
+								>
+									{action.label}
+								</button>
+							))}
+						</div>
+
 						<div className="flex items-end gap-1.5">
 							<textarea
 								ref={inputRef}
@@ -1017,11 +1184,28 @@ export function AIStudioView() {
 							/>
 							<Button
 								size="icon"
+								type="button"
+								variant={isRecording ? "destructive" : "secondary"}
+								className={cn(
+									"size-[36px] shrink-0 transition-all duration-300",
+									isRecording && "animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.5)] border-red-500 bg-red-500 hover:bg-red-600"
+								)}
+								onClick={toggleRecording}
+								disabled={isThinking || !isConnected}
+								title={isRecording ? "Stop recording voice" : "Voice input"}
+							>
+								<HugeiconsIcon
+									icon={AiMicIcon}
+									className={cn("size-3.5", isRecording ? "text-white" : "text-muted-foreground")}
+								/>
+							</Button>
+							<Button
+								size="icon"
 								variant={
 									inputValue.trim() ? "default" : "secondary"
 								}
 								className="size-[36px] shrink-0"
-								onClick={handleSend}
+								onClick={() => handleSend()}
 								disabled={
 									!inputValue.trim() ||
 									isThinking ||
