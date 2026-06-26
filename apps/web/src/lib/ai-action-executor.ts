@@ -201,7 +201,7 @@ export async function executeAction(action: EditorAction): Promise<void> {
 				trimStart: 0,
 				trimEnd: asset.duration || 5,
 				opacity: 100,
-				transform: { x: 0, y: 0, scale: 1, rotation: 0 },
+				transform: { scale: 1, position: { x: 0, y: 0 }, rotate: 0 },
 				animations: { channels: {} },
 				effects: [],
 			};
@@ -407,7 +407,7 @@ export async function executeAction(action: EditorAction): Promise<void> {
 							fontStyle: "normal",
 							textDecoration: "none",
 							background: { enabled: true, color: "#00000088", paddingX: 16, paddingY: 8, cornerRadius: 8 },
-							transform: { x: 0.5, y: 0.9, scaleX: 1, scaleY: 1, rotation: 0 },
+							transform: { scale: 1, position: { x: 0, y: 350 }, rotate: 0 },
 							opacity: 1
 						} as any,
 						placement: { mode: "explicit" as const, trackId, startTime: seg.start },
@@ -443,7 +443,7 @@ export async function executeAction(action: EditorAction): Promise<void> {
 						trimStart: 0,
 						trimEnd: 0,
 						opacity: 1,
-						transform: { x: (action.params.x as number) ?? 0.5, y: (action.params.y as number) ?? 0.5, scaleX: 1, scaleY: 1, rotation: 0 }
+						transform: { scale: 1, position: { x: 0, y: 0 }, rotate: 0 }
 					} as any,
 					placement: { mode: "explicit" as const, trackId, startTime: 0 }
 				});
@@ -572,7 +572,7 @@ export async function executeAction(action: EditorAction): Promise<void> {
 						trimStart: 0,
 						trimEnd: 0,
 						opacity: 1,
-						transform: { x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, rotation: 0 }
+						transform: { scale: 1, position: { x: 0, y: 0 }, rotate: 0 }
 					} as any,
 					placement: { mode: "explicit" as const, trackId, startTime: 0 }
 				});
