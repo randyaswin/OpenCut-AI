@@ -47,8 +47,48 @@ def run_ingest_pipeline(asset_id: str, file_path: str, webhook_url: str):
         job.save_meta()
     results["metadata"] = extract_metadata(file_path)
 
-    # Format Normalization is now handled purely on the client side via proxy generation.
-    # The frontend uploads the proxy file which is already a normalized MP4.
+    # Format Normalization
+    if job:
+        job.meta['progress'] = 'normalizing_format'
+        job.save_meta()
+
+    needs_normalization = False
+    format_name = results.get("metadata", {}).get("format", {}).get("format_name", "").lower()
+    
+    has_hevc_or_incompatible = False
+    has_gpmd = False
+    for stream in results.get("metadata", {}).get("streams", []):
+        codec_name = stream.get("codec_name", "").lower()
+        if codec_name in ["hevc", "h265", "prores", "dnxhd"]:
+            has_hevc_or_incompatible = True
+        if stream.get("codec_type") == "data" and "gpmd" in stream.get("codec_tag_string", "").lower():
+            has_gpmd = True
+
+    if "mov" in format_name or has_hevc_or_incompatible or has_gpmd:
+        needs_normalization = True
+
+    if needs_normalization:
+        try:
+            normalized_dir = os.path.join(settings.GENERATED_DIR, "normalized")
+            os.makedirs(normalized_dir, exist_ok=True)
+            norm_path = os.path.join(normalized_dir, f"{asset_id}.mp4")
+            
+            logger.info(f"Normalizing incompatible video {file_path} to H.264 MP4 at {norm_path}")
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", file_path,
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                "-preset", "fast",
+                norm_path
+            ]
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if os.path.exists(norm_path):
+                results["normalized_url"] = f"{settings.BASE_URL.rstrip('/')}/generated/normalized/{asset_id}.mp4"
+                logger.info(f"Video normalized successfully: {results['normalized_url']}")
+        except Exception as e:
+            logger.error(f"Format normalization failed: {e}")
 
     is_image = False
     format_name = results.get("metadata", {}).get("format", {}).get("format_name", "")
