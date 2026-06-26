@@ -270,6 +270,12 @@ class StorageService {
 			this.getProjectMediaAdapters({ projectId });
 
 		await mediaAssetsAdapter.set(mediaAsset.id, mediaAsset.file);
+		
+		if (mediaAsset.normalizedFile) {
+			await mediaAssetsAdapter.set(`${mediaAsset.id}-normalized`, mediaAsset.normalizedFile);
+		} else {
+			await mediaAssetsAdapter.remove(`${mediaAsset.id}-normalized`).catch(() => {});
+		}
 
 		const metadata: MediaAssetData = {
 			id: mediaAsset.id,
@@ -285,6 +291,7 @@ class StorageService {
 			label: mediaAsset.label,
 			proxy: mediaAsset.proxy,
 			needsProxy: mediaAsset.needsProxy,
+			codecCompatible: mediaAsset.codecCompatible,
 		};
 
 		await mediaMetadataAdapter.set(mediaAsset.id, metadata);
@@ -300,9 +307,10 @@ class StorageService {
 		const { mediaMetadataAdapter, mediaAssetsAdapter } =
 			this.getProjectMediaAdapters({ projectId });
 
-		const [file, metadata] = await Promise.all([
+		const [file, metadata, normalizedFileRaw] = await Promise.all([
 			mediaAssetsAdapter.get(id),
 			mediaMetadataAdapter.get(id),
+			mediaAssetsAdapter.get(`${id}-normalized`),
 		]);
 
 		if (!file || !metadata) return null;
@@ -337,6 +345,20 @@ class StorageService {
 			url = URL.createObjectURL(restoredFile);
 		}
 
+		let normalizedFile: File | undefined = undefined;
+		let normalizedUrl: string | undefined = undefined;
+
+		if (normalizedFileRaw) {
+			normalizedFile =
+				normalizedFileRaw.name === metadata.name && normalizedFileRaw.type === "video/mp4"
+					? normalizedFileRaw
+					: new File([normalizedFileRaw], metadata.name, {
+							type: "video/mp4",
+							lastModified: normalizedFileRaw.lastModified,
+						});
+			normalizedUrl = URL.createObjectURL(normalizedFile);
+		}
+
 		return {
 			id: metadata.id,
 			name: metadata.name,
@@ -350,6 +372,9 @@ class StorageService {
 			ephemeral: metadata.ephemeral,
 			proxy: metadata.proxy,
 			needsProxy: metadata.needsProxy,
+			codecCompatible: metadata.codecCompatible,
+			normalizedFile,
+			normalizedUrl,
 		};
 	}
 
