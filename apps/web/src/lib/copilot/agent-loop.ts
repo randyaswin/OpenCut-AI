@@ -339,7 +339,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 		editor,
 		onToken,
 		onToolCall,
-		maxIterations = 8,
+		maxIterations = 50,
 		history = [],
 	} = options;
 
@@ -350,19 +350,37 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 		messages.push(...history.slice(-10));
 	}
 
-	// Add user goal
+	// Add user goal with structured ReAct instructions
 	messages.push({
 		role: "user",
-		content: `Goal: ${goal}\n\nYou can query the project library or timeline using tools if needed. Otherwise, output your final copilot-plan directly.`,
+		content: `Goal: ${goal}\n\nBegin your Thought → Action loop. If you need project information, call a tool first. When ready, output your final copilot-plan.`,
 	});
 
 	let iterations = 0;
 	let lastOutput = "";
 	let hasRetriedJSON = false;
 
+	// Stuck-loop detection: track last tool call to detect repeated identical calls
+	let lastToolKey = "";
+	let consecutiveRepeatCount = 0;
+
 	while (iterations < maxIterations) {
 		iterations++;
 		let accumulated = "";
+
+		// Context window trimming: if messages exceed 40 entries, summarize older turns
+		// to prevent context overflow while preserving recent tool results
+		if (messages.length > 40) {
+			const systemMsgs = messages.filter(m => m.role === "system");
+			const recentMessages = messages.slice(-20);
+			const trimmedCount = messages.length - 20 - systemMsgs.length;
+			const summary = {
+				role: "user" as const,
+				content: `[CONTEXT_SUMMARY] ${trimmedCount} earlier messages were trimmed. The conversation has been ongoing for ${iterations - 1} turns. Continue from where you left off — gather any remaining info or produce your final copilot-plan.`,
+			};
+			messages.length = 0;
+			messages.push(...systemMsgs, summary, ...recentMessages);
+		}
 
 		const result = await aiClient.chatStream(
 			messages,
@@ -387,18 +405,40 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 				const toolName = toolCall.tool;
 				const params = toolCall.params || {};
 
+				// Stuck-loop detection: check if this is the same tool+params as last turn
+				const toolKey = JSON.stringify({ tool: toolName, params });
+				if (toolKey === lastToolKey) {
+					consecutiveRepeatCount++;
+					if (consecutiveRepeatCount >= 2) {
+						// Break the stuck loop by nudging the model
+						messages.push({ role: "assistant", content: responseText });
+						messages.push({
+							role: "user",
+							content: `[SYSTEM_NOTICE] You have called "${toolName}" with identical parameters ${consecutiveRepeatCount + 1} times in a row. The result will be the same. Please either: (a) call a DIFFERENT tool or with different parameters, or (b) produce your final copilot-plan based on the information you already have.`,
+						});
+						consecutiveRepeatCount = 0;
+						lastToolKey = "";
+						continue;
+					}
+				} else {
+					consecutiveRepeatCount = 0;
+				}
+				lastToolKey = toolKey;
+
 				onToolCall(toolName, params, iterations);
 
 				const toolResult = await executeTool(toolName, params, editor);
 
-				// Preserving history in message format
+				// Tool results sent as role:"user" with clear framing so models
+				// don't ignore/deprioritize them (some models treat "system" messages
+				// as lower priority or strip them in certain contexts)
 				messages.push({ role: "assistant", content: responseText });
-				messages.push({ role: "system", content: `Tool Result:\n${toolResult}` });
+				messages.push({ role: "user", content: `[TOOL_RESULT] Tool "${toolName}" returned:\n${toolResult}\n\nContinue your Thought → Action loop. Analyze the result above and decide your next step.` });
 				continue;
 			} catch (err: any) {
 				const errorMsg = `Error parsing or executing tool: ${err.message || err}`;
 				messages.push({ role: "assistant", content: responseText });
-				messages.push({ role: "system", content: `Tool Result:\n${errorMsg}` });
+				messages.push({ role: "user", content: `[TOOL_ERROR] ${errorMsg}\n\nPlease fix the tool call or try a different approach.` });
 				continue;
 			}
 		}
@@ -435,15 +475,15 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 					hasRetriedJSON = true;
 					messages.push({ role: "assistant", content: responseText });
 					messages.push({
-						role: "system",
-						content: `Error parsing JSON plan: ${e.message || e}. Please output ONLY a valid JSON copilot-plan.`,
+						role: "user",
+						content: `[JSON_ERROR] Failed to parse your copilot-plan: ${e.message || e}.\n\nPlease output ONLY a valid JSON copilot-plan block. Make sure all JSON is properly formatted with correct brackets and quotes.`,
 					});
 					continue;
 				}
 			}
 		}
 
-		// If no tool call and no valid copilot-plan was parsed, we exit
+		// If no tool call and no valid copilot-plan was parsed, we assume it's a conversational response and exit
 		break;
 	}
 
@@ -474,3 +514,4 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 
 	return { plan: null, rawOutput: lastOutput, iterations };
 }
+
