@@ -82,6 +82,14 @@ export function SettingsView() {
 				</Section>
 				<Section>
 					<SectionHeader>
+						<SectionTitle>AI Backends</SectionTitle>
+					</SectionHeader>
+					<SectionContent>
+						<AIBackendsSection />
+					</SectionContent>
+				</Section>
+				<Section>
+					<SectionHeader>
 						<SectionTitle>API Keys</SectionTitle>
 					</SectionHeader>
 					<SectionContent>
@@ -919,6 +927,120 @@ function ComputeModeSelector({
 	);
 }
 
+// ----- AI Backends Section -----
+
+function AIBackendsSection() {
+	const [config, setConfig] = useState<Record<string, string>>(() => {
+		const saved = loadSavedConfig();
+		return {
+			TTS_BACKEND: String(saved.TTS_BACKEND || "auto"),
+			OPENAI_TTS_MODEL: String(saved.OPENAI_TTS_MODEL || "tts-1"),
+			OPENAI_TTS_VOICE: String(saved.OPENAI_TTS_VOICE || "alloy"),
+			IMAGE_BACKEND: String(saved.IMAGE_BACKEND || "auto"),
+			OPENAI_IMAGE_MODEL: String(saved.OPENAI_IMAGE_MODEL || "dall-e-3"),
+		};
+	});
+
+	const handleUpdate = (key: string, value: string) => {
+		const updates = { [key]: value };
+		saveConfig(updates);
+		setConfig((prev) => ({ ...prev, [key]: value }));
+		aiClient.updateConfig(updates)
+			.then(() => toast.success(`Setting ${key} updated`))
+			.catch(() => toast.error(`Failed to update ${key} on backend`));
+	};
+
+	return (
+		<div className="flex flex-col gap-4">
+			{/* TTS Backend */}
+			<div className="flex flex-col gap-1.5">
+				<Label className="text-xs">TTS Backend</Label>
+				<Select
+					value={config.TTS_BACKEND}
+					onValueChange={(val) => handleUpdate("TTS_BACKEND", val)}
+				>
+					<SelectTrigger className="w-full">
+						<SelectValue placeholder="Select TTS backend" />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="auto">Auto (OpenAI fallback to Local)</SelectItem>
+						<SelectItem value="openai">OpenAI-Compatible API</SelectItem>
+						<SelectItem value="local">Local Coqui TTS</SelectItem>
+					</SelectContent>
+				</Select>
+			</div>
+
+			{/* OpenAI TTS Settings */}
+			{(config.TTS_BACKEND === "openai" || config.TTS_BACKEND === "auto") && (
+				<div className="flex flex-col gap-3 pl-3 border-l-2 border-primary/20">
+					<div className="flex flex-col gap-1.5">
+						<Label className="text-[11px] text-muted-foreground">OpenAI TTS Model</Label>
+						<input
+							type="text"
+							placeholder="tts-1"
+							value={config.OPENAI_TTS_MODEL}
+							onChange={(e) => handleUpdate("OPENAI_TTS_MODEL", e.target.value)}
+							className="w-full rounded-md border bg-transparent px-2.5 py-1.5 text-[11px] outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/40 font-mono"
+						/>
+					</div>
+					<div className="flex flex-col gap-1.5">
+						<Label className="text-[11px] text-muted-foreground">OpenAI TTS Voice</Label>
+						<Select
+							value={config.OPENAI_TTS_VOICE}
+							onValueChange={(val) => handleUpdate("OPENAI_TTS_VOICE", val)}
+						>
+							<SelectTrigger className="w-full">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{["alloy", "echo", "fable", "onyx", "nova", "shimmer"].map((v) => (
+									<SelectItem key={v} value={v}>
+										{v}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</div>
+				</div>
+			)}
+
+			{/* Image Backend */}
+			<div className="flex flex-col gap-1.5">
+				<Label className="text-xs">Image Generation Backend</Label>
+				<Select
+					value={config.IMAGE_BACKEND}
+					onValueChange={(val) => handleUpdate("IMAGE_BACKEND", val)}
+				>
+					<SelectTrigger className="w-full">
+						<SelectValue placeholder="Select image backend" />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="auto">Auto (OpenAI fallback to Local)</SelectItem>
+						<SelectItem value="openai">OpenAI-Compatible API</SelectItem>
+						<SelectItem value="local">Local Stable Diffusion</SelectItem>
+					</SelectContent>
+				</Select>
+			</div>
+
+			{/* OpenAI Image Settings */}
+			{(config.IMAGE_BACKEND === "openai" || config.IMAGE_BACKEND === "auto") && (
+				<div className="flex flex-col gap-3 pl-3 border-l-2 border-primary/20">
+					<div className="flex flex-col gap-1.5">
+						<Label className="text-[11px] text-muted-foreground">OpenAI Image Model</Label>
+						<input
+							type="text"
+							placeholder="dall-e-3"
+							value={config.OPENAI_IMAGE_MODEL}
+							onChange={(e) => handleUpdate("OPENAI_IMAGE_MODEL", e.target.value)}
+							className="w-full rounded-md border bg-transparent px-2.5 py-1.5 text-[11px] outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/40 font-mono"
+						/>
+					</div>
+				</div>
+			)}
+		</div>
+	);
+}
+
 // ----- API Keys Section -----
 
 const API_KEY_FIELDS = [
@@ -941,6 +1063,56 @@ const API_KEY_FIELDS = [
 		envValue: process.env.FREESOUND_API_KEY || "",
 		info: "Required to preview and download sounds from Freesound. Without this key, the Sounds panel won't return results.",
 		required: true,
+	},
+	{
+		key: "openai",
+		label: "OpenAI API Key",
+		placeholder: "sk-...",
+		description: "Use any OpenAI-compatible LLM endpoint (OpenAI, OpenRouter, Groq, etc.)",
+		envVar: "NEXT_PUBLIC_OPENAI_API_KEY",
+		envValue: process.env.NEXT_PUBLIC_OPENAI_API_KEY || process.env.OPENCUTAI_OPENAI_API_KEY || "",
+		info: "Set this to use an external LLM instead of local Ollama/TurboQuant.",
+		required: false,
+	},
+	{
+		key: "openai_base_url",
+		label: "OpenAI Base URL",
+		placeholder: "https://api.openai.com/v1",
+		description: "Base URL for the OpenAI-compatible endpoint",
+		envVar: "NEXT_PUBLIC_OPENAI_BASE_URL",
+		envValue: process.env.NEXT_PUBLIC_OPENAI_BASE_URL || process.env.OPENCUTAI_OPENAI_BASE_URL || "",
+		info: "If using a custom endpoint like OpenRouter or LM Studio, set it here. Default is https://api.openai.com/v1.",
+		required: false,
+	},
+	{
+		key: "openai_model",
+		label: "OpenAI Model Name",
+		placeholder: "gpt-4o",
+		description: "The name of the model to request (e.g. gpt-4o, anthropic/claude-3-opus)",
+		envVar: "NEXT_PUBLIC_OPENAI_MODEL",
+		envValue: process.env.NEXT_PUBLIC_OPENAI_MODEL || process.env.OPENCUTAI_OPENAI_MODEL || "",
+		info: "The exact model string to pass in the API request.",
+		required: false,
+	},
+	{
+		key: "openai_image_model",
+		label: "OpenAI Image Model",
+		placeholder: "dall-e-3",
+		description: "Name of the model to use for image generation",
+		envVar: "NEXT_PUBLIC_OPENAI_IMAGE_MODEL",
+		envValue: process.env.NEXT_PUBLIC_OPENAI_IMAGE_MODEL || process.env.OPENCUTAI_OPENAI_IMAGE_MODEL || "",
+		info: "The OpenAI-compatible model to use for image generation (e.g., dall-e-3).",
+		required: false,
+	},
+	{
+		key: "openai_vision_capable",
+		label: "OpenAI Vision Capable",
+		placeholder: "true or false",
+		description: "Whether the selected OpenAI model supports vision/images",
+		envVar: "NEXT_PUBLIC_OPENAI_VISION_CAPABLE",
+		envValue: process.env.NEXT_PUBLIC_OPENAI_VISION_CAPABLE || "",
+		info: "Set to 'true' if the OpenAI model you specified above supports vision (e.g., gpt-4o, gpt-4-turbo). This enables AI scene description from video frames.",
+		required: false,
 	},
 	{
 		key: "sarvam",

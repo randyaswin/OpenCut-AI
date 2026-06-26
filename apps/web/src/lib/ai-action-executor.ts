@@ -1,5 +1,6 @@
 import type { EditorAction, EditorActionType } from "@/types/ai";
 import { useTranscriptStore } from "@/stores/transcript-store";
+import { aiClient } from "@/lib/ai-client";
 
 function getTranscriptStore() {
 	return useTranscriptStore.getState();
@@ -8,6 +9,18 @@ function getTranscriptStore() {
 function getEditorCore() {
 	const { EditorCore } = require("@/core");
 	return EditorCore.getInstance();
+}
+
+export function isDestructiveAction(type: EditorActionType): boolean {
+	const destructiveTypes: EditorActionType[] = [
+		"REMOVE_SEGMENTS",
+		"REMOVE_FILLERS",
+		"REMOVE_SILENCE",
+		"TRIM_CLIP",
+		"SPLIT_CLIP",
+		"EXPORT_PROJECT"
+	];
+	return destructiveTypes.includes(type);
 }
 
 export function previewAction(action: EditorAction): string {
@@ -61,19 +74,25 @@ export function previewAction(action: EditorAction): string {
 		case "SET_CANVAS_SIZE":
 			return `Set canvas to ${action.params.label ?? `${action.params.width}x${action.params.height}`}`;
 		case "ADD_MUSIC":
-			return `Add ${action.params.genre ?? ""} music (${action.params.mood ?? ""}, ${action.params.duration ?? 30}s)`;
+			return `Add background music: "${action.params.query ?? "auto"}" (${action.params.duration ?? 30}s)`;
 		case "NORMALIZE_AUDIO":
 			return `Normalize audio to ${action.params.targetLUFS ?? -14} LUFS`;
 		case "AUTO_DUCK":
 			return `Auto-duck music under speech (${action.params.duckAmount ?? -12}dB)`;
 		case "COLOR_CORRECT":
 			return `Apply "${action.params.profile ?? "auto"}" color correction`;
+		case "ADD_EFFECT":
+			return `Add "${action.params.effectType ?? "filter"}" effect to timeline clips`;
+		case "AUTO_REFRAME":
+			return `Auto-reframe to ${action.params.targetRatio ?? "9:16"}${action.params.subject ? ` following "${action.params.subject}"` : ""}`;
+		case "ADD_MEDIA_TO_TIMELINE":
+			return `Add asset to timeline`;
 		default:
 			return action.description;
 	}
 }
 
-export function executeAction(action: EditorAction): void {
+export async function executeAction(action: EditorAction): Promise<void> {
 	const store = getTranscriptStore();
 
 	switch (action.type) {
@@ -133,6 +152,64 @@ export function executeAction(action: EditorAction): void {
 			if (chapters) {
 				store.setChapters(chapters);
 			}
+			break;
+		}
+
+		case "ADD_MEDIA_TO_TIMELINE": {
+			const assetId = action.params.assetId as string;
+			if (!assetId) break;
+			
+			const editor = getEditorCore();
+			const asset = editor.media.getAssetById(assetId);
+			if (!asset) {
+				console.warn(`Asset ${assetId} not found`);
+				break;
+			}
+			
+			let trackId = action.params.trackId as string | undefined;
+			let startTime = action.params.startTime as number | undefined;
+			
+			if (!trackId) {
+				const tracks = editor.timeline.getTracks();
+				const targetTrack = tracks.find((t: any) => t.type === asset.type) || tracks[0];
+				if (targetTrack) {
+					trackId = targetTrack.id;
+				} else {
+					trackId = editor.timeline.addTrack({ type: asset.type });
+				}
+			}
+			
+			if (startTime === undefined) {
+				const tracks = editor.timeline.getTracks();
+				const track = tracks.find((t: any) => t.id === trackId);
+				if (track && track.elements.length > 0) {
+					startTime = Math.max(...track.elements.map((e: any) => e.startTime + e.duration));
+				} else {
+					startTime = 0;
+				}
+			}
+			
+			const { generateUUID } = require("@/utils/id");
+			const elementId = generateUUID();
+			
+			const element = {
+				id: elementId,
+				type: asset.type,
+				name: asset.name,
+				startTime,
+				duration: asset.duration || 5,
+				trackId,
+				mediaId: asset.id,
+				trimStart: 0,
+				trimEnd: asset.duration || 5,
+				opacity: 100,
+				transform: { scale: 1, position: { x: 0, y: 0 }, rotate: 0 },
+				animations: { channels: {} },
+				effects: [],
+				...(asset.type === "audio" ? { sourceType: "upload" as const, volume: 100 } : {})
+			};
+			
+			editor.timeline.insertElement({ element, placement: { mode: "explicit" as const, trackId } });
 			break;
 		}
 
@@ -226,31 +303,467 @@ export function executeAction(action: EditorAction): void {
 			break;
 		}
 
-		case "NORMALIZE_AUDIO":
-		case "AUTO_DUCK":
-		case "COLOR_CORRECT":
-		case "ADD_SUBTITLE_TRACK":
-		case "ADD_IMAGE_OVERLAY":
-		case "TRIM_CLIP":
-		case "ADD_TRANSITION":
-		case "ADD_VOICEOVER":
-		case "DENOISE_AUDIO":
-		case "GENERATE_IMAGE":
-		case "ADD_MUSIC":
-		case "EXPORT_PROJECT":
-			console.warn(
-				`[ai-action-executor] Action "${action.type}" queued. Params:`,
-				action.params,
-			);
+		case "NORMALIZE_AUDIO": {
+			try {
+				const editor = getEditorCore();
+				const tracks = editor.timeline.getTracks();
+				const updates: Array<{ trackId: string; elementId: string; updates: any }> = [];
+				for (const track of tracks) {
+					for (const el of track.elements) {
+						if (el.type === "video" || el.type === "audio") {
+							updates.push({
+								trackId: track.id,
+								elementId: el.id,
+								updates: { volume: 1.0 },
+							});
+						}
+					}
+				}
+				if (updates.length > 0) {
+					editor.timeline.updateElements({ updates });
+				}
+			} catch (e) {
+				console.error(e);
+			}
 			break;
+		}
+
+		case "AUTO_DUCK": {
+			try {
+				const editor = getEditorCore();
+				const tracks = editor.timeline.getTracks();
+				const duckAmount = (action.params.duckAmount as number) ?? -12;
+				const linearVolume = Math.pow(10, duckAmount / 20);
+				
+				const silences = store.silences;
+				const segments = store.segments;
+				
+				for (const track of tracks) {
+					if (track.type === "audio") {
+						for (const el of track.elements) {
+							const keyframes = [];
+							for (const seg of segments) {
+								if (seg.start >= el.startTime && seg.start <= el.startTime + el.duration) {
+									keyframes.push({ trackId: track.id, elementId: el.id, propertyPath: "volume" as const, time: seg.start - 0.5, value: 1.0, interpolation: "linear" as const });
+									keyframes.push({ trackId: track.id, elementId: el.id, propertyPath: "volume" as const, time: seg.start, value: linearVolume, interpolation: "linear" as const });
+									keyframes.push({ trackId: track.id, elementId: el.id, propertyPath: "volume" as const, time: seg.end, value: linearVolume, interpolation: "linear" as const });
+									keyframes.push({ trackId: track.id, elementId: el.id, propertyPath: "volume" as const, time: seg.end + 0.5, value: 1.0, interpolation: "linear" as const });
+								}
+							}
+							if (keyframes.length > 0) {
+								editor.timeline.upsertKeyframes({ keyframes });
+							}
+						}
+					}
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "COLOR_CORRECT": {
+			try {
+				const editor = getEditorCore();
+				const tracks = editor.timeline.getTracks();
+				for (const track of tracks) {
+					for (const el of track.elements) {
+						if (el.type === "video" || el.type === "image") {
+							editor.timeline.addClipEffect({
+								trackId: track.id,
+								elementId: el.id,
+								effectType: "color_adjust",
+							});
+						}
+					}
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "ADD_EFFECT": {
+			try {
+				const editor = getEditorCore();
+				const tracks = editor.timeline.getTracks();
+				const effectType = (action.params.effectType as string) ?? "filter";
+				for (const track of tracks) {
+					for (const el of track.elements) {
+						if (el.type === "video" || el.type === "image") {
+							editor.timeline.addClipEffect({
+								trackId: track.id,
+								elementId: el.id,
+								effectType: effectType,
+							});
+						}
+					}
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "ADD_SUBTITLE_TRACK": {
+			try {
+				const editor = getEditorCore();
+				const segments = store.segments;
+				if (segments.length === 0) break;
+				
+				const trackId = editor.timeline.addTrack({ type: "text" });
+				
+				for (const seg of segments) {
+					editor.timeline.insertElement({
+						element: {
+							type: "text",
+							sourceType: "upload",
+							name: "Subtitle",
+							content: seg.text,
+							startTime: seg.start,
+							duration: seg.end - seg.start,
+							trimStart: 0,
+							trimEnd: 0,
+							fontSize: 48,
+							fontFamily: "Inter",
+							color: "#FFFFFF",
+							textAlign: "center",
+							fontWeight: "bold",
+							fontStyle: "normal",
+							textDecoration: "none",
+							background: { enabled: true, color: "#00000088", paddingX: 16, paddingY: 8, cornerRadius: 8 },
+							transform: { scale: 1, position: { x: 0, y: 350 }, rotate: 0 },
+							opacity: 1
+						} as any,
+						placement: { mode: "explicit" as const, trackId, startTime: seg.start },
+					});
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "ADD_IMAGE_OVERLAY": {
+			try {
+				const editor = getEditorCore();
+				const url = action.params.url as string;
+				if (!url) break;
+				
+				const trackId = editor.timeline.addTrack({ type: "video" });
+				const projectId = editor.project.getActive().id;
+				
+				const res = await fetch(url);
+				const blob = await res.blob();
+				const file = new File([blob], "overlay.png", { type: res.headers.get("content-type") || "image/png" });
+				const mediaId = await editor.media.addMediaAsset({ projectId, asset: { type: "image", file, url: URL.createObjectURL(file), name: "Overlay Image", width: 1024, height: 1024 } as any });
+				
+				editor.timeline.insertElement({
+					element: {
+						type: "image",
+						mediaId,
+						name: "Overlay Image",
+						startTime: 0,
+						duration: 5,
+						trimStart: 0,
+						trimEnd: 0,
+						opacity: 1,
+						transform: { scale: 1, position: { x: 0, y: 0 }, rotate: 0 }
+					} as any,
+					placement: { mode: "explicit" as const, trackId, startTime: 0 }
+				});
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "TRIM_CLIP": {
+			try {
+				const editor = getEditorCore();
+				const start = action.params.start as number | undefined;
+				const end = action.params.end as number | undefined;
+				if (start !== undefined && end !== undefined) {
+					const tracks = editor.timeline.getTracks();
+					let trimmed = false;
+					for (const track of tracks) {
+						for (const el of track.elements) {
+							if (el.type === "video") {
+								const currentTrimStart = el.trimStart ?? 0;
+								editor.timeline.updateElementTrim({
+									elementId: el.id,
+									trimStart: currentTrimStart + start,
+									trimEnd: currentTrimStart + end,
+									startTime: el.startTime,
+									duration: end - start
+								});
+								trimmed = true;
+								break;
+							}
+						}
+						if (trimmed) break;
+					}
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "ADD_TRANSITION": {
+			try {
+				const editor = getEditorCore();
+				const tracks = editor.timeline.getTracks();
+				for (const track of tracks) {
+					for (let i = 0; i < track.elements.length - 1; i++) {
+						const el = track.elements[i];
+						const next = track.elements[i + 1];
+						if (Math.abs(el.startTime + el.duration - next.startTime) < 0.1) {
+							editor.timeline.updateElements({
+								updates: [{
+									trackId: track.id,
+									elementId: el.id,
+									updates: { transitionOut: { type: action.params.transitionType as string ?? "crossfade", duration: 1.0 } }
+								}]
+							});
+						}
+					}
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "ADD_VOICEOVER": {
+			try {
+				const text = action.params.text as string;
+				if (!text) break;
+				
+				const blob = await aiClient.generateSpeechBlob({ text, language: "en", speaker: "default" });
+				const editor = getEditorCore();
+				const trackId = editor.timeline.addTrack({ type: "audio" });
+				const projectId = editor.project.getActive().id;
+				
+				const file = new File([blob], "voiceover.wav", { type: "audio/wav" });
+				const mediaId = await editor.media.addMediaAsset({ projectId, asset: { type: "audio", file, url: URL.createObjectURL(file), name: "Voiceover" } as any });
+				
+				editor.timeline.insertElement({
+					element: {
+						type: "audio",
+						sourceType: "upload",
+						mediaId,
+						name: "Voiceover",
+						startTime: 0,
+						duration: 5,
+						trimStart: 0,
+						trimEnd: 0,
+						volume: 1.0,
+					} as any,
+					placement: { mode: "explicit" as const, trackId, startTime: 0 },
+				});
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "DENOISE_AUDIO": {
+			try {
+				const strength = (action.params.strength as number) ?? 0.7;
+				const editor = getEditorCore();
+				const tracks = editor.timeline.getTracks();
+				let foundElement: any = null;
+				let foundFile: File | null = null;
+
+				for (const track of tracks) {
+					for (const element of track.elements) {
+						if (
+							(track.type === "video" || track.type === "audio") &&
+							element.mediaId
+						) {
+							const asset = editor.media.getAssets().find((a: any) => a.id === element.mediaId);
+							if (asset?.file) {
+								foundElement = element;
+								foundFile = asset.file;
+								break;
+							}
+						}
+					}
+					if (foundFile) break;
+				}
+
+				if (!foundFile || !foundElement) {
+					console.warn("[ai-action-executor] No audio or video file found to denoise.");
+					break;
+				}
+
+				const res = await aiClient.denoiseAudio(foundFile, strength);
+				const audioRes = await fetch(res.audioUrl);
+				const blob = await audioRes.blob();
+				const file = new File([blob], `denoised_${foundFile.name}`, { type: audioRes.headers.get("content-type") || "audio/wav" });
+				
+				const projectId = editor.project.getActive().id;
+				const mediaId = await editor.media.addMediaAsset({
+					projectId,
+					asset: {
+						type: "audio",
+						file,
+						url: URL.createObjectURL(file),
+						name: `Denoised ${foundFile.name}`,
+						duration: foundElement.duration,
+					} as any,
+				});
+
+				editor.timeline.updateElement(foundElement.id, { mediaId });
+			} catch (e) {
+				console.error("[ai-action-executor] Denoise failed:", e);
+			}
+			break;
+		}
+
+		case "GENERATE_IMAGE": {
+			try {
+				const prompt = action.params.prompt as string;
+				if (!prompt) break;
+				const res = await aiClient.generateImage({ prompt, width: 1024, height: 1024, steps: 30, guidanceScale: 7.5 });
+				const editor = getEditorCore();
+				const trackId = editor.timeline.addTrack({ type: "video" });
+				const projectId = editor.project.getActive().id;
+				
+				const imgRes = await fetch(res.imageUrl);
+				const blob = await imgRes.blob();
+				const file = new File([blob], "generated.png", { type: imgRes.headers.get("content-type") || "image/png" });
+				const mediaId = await editor.media.addMediaAsset({ projectId, asset: { type: "image", file, url: URL.createObjectURL(file), name: "AI Image", width: 1024, height: 1024 } as any });
+				
+				editor.timeline.insertElement({
+					element: {
+						type: "image",
+						mediaId,
+						name: "Generated Image",
+						startTime: 0,
+						duration: 5,
+						trimStart: 0,
+						trimEnd: 0,
+						opacity: 1,
+						transform: { scale: 1, position: { x: 0, y: 0 }, rotate: 0 }
+					} as any,
+					placement: { mode: "explicit" as const, trackId, startTime: 0 }
+				});
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "ADD_MUSIC": {
+			try {
+				const editor = getEditorCore();
+				const projectId = editor.project.getActive().id;
+				const query = action.params.query as string || `${action.params.genre || ""} ${action.params.mood || ""}`.trim() || "background music";
+
+				const res = await fetch(`/api/sounds/search?q=${encodeURIComponent(query)}&type=songs`);
+				if (!res.ok) throw new Error("Failed to search Freesound");
+				
+				const data = await res.json();
+				if (data.results && data.results.length > 0) {
+					const sound = data.results[0];
+					const previewUrl = sound.previewUrl;
+					
+					if (previewUrl) {
+						const audioRes = await fetch(previewUrl);
+						const blob = await audioRes.blob();
+						const file = new File([blob], "music.mp3", { type: audioRes.headers.get("content-type") || "audio/mpeg" });
+						
+						const mediaId = await editor.media.addMediaAsset({ projectId, asset: { type: "audio", file, url: URL.createObjectURL(file), name: sound.name, duration: sound.duration || action.params.duration || 30 } as any });
+						const trackId = editor.timeline.addTrack({ type: "audio" });
+						
+						editor.timeline.insertElement({
+							element: {
+								type: "audio",
+								sourceType: "upload",
+								mediaId,
+								name: sound.name,
+								startTime: 0,
+								duration: sound.duration || action.params.duration || 30,
+								trimStart: 0,
+								trimEnd: 0,
+								volume: 0.5,
+							} as any,
+							placement: { mode: "explicit" as const, trackId, startTime: 0 },
+						});
+						break;
+					}
+				}
+				console.warn("[ai-action-executor] Freesound returned no results or missing preview URL.");
+			} catch (e) {
+				console.error("[ai-action-executor] Failed to add music:", e);
+			}
+			break;
+		}
+
+		case "EXPORT_PROJECT": {
+			try {
+				const editor = getEditorCore();
+				await editor.renderer.exportProject({ options: { format: "mp4", quality: "high", fps: 30, includeAudio: true, includeWatermark: false } });
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "AUTO_REFRAME": {
+			try {
+				const editor = getEditorCore();
+				const targetRatioStr = (action.params.targetRatio as string) ?? "9:16";
+				const [wStr, hStr] = targetRatioStr.split(":");
+				const tw = parseInt(wStr) || 9;
+				const th = parseInt(hStr) || 16;
+				
+				const subject = action.params.subject as string | undefined;
+
+				const tracks = editor.timeline.getTracks();
+				for (const track of tracks) {
+					for (const el of track.elements) {
+						if (el.type === "video") {
+							const media = editor.media.getAssetById(el.mediaId);
+							if (media?.file) {
+								const { computeReframeKeyframes, getDefaultReframeOptions } = await import("@/lib/reframe/reframe-types");
+								const detection = await aiClient.detectFaces(media.file, { sampleInterval: 0.5, subject });
+								
+								const opts = {
+									...getDefaultReframeOptions(),
+									targetWidth: tw * 100, // proportional width
+									targetHeight: th * 100, // proportional height
+								};
+								
+								const keyframes = computeReframeKeyframes(detection, opts);
+								
+								const animations = { ...(el.animations || {}) };
+								const channels = { ...(animations.channels || {}) };
+								channels.positionX = keyframes.positionX;
+								channels.positionY = keyframes.positionY;
+								channels.scale = keyframes.scale;
+								animations.channels = channels;
+								
+								editor.timeline.updateElement(el.id, { animations });
+							}
+						}
+					}
+				}
+			} catch (e) {
+				console.error("[ai-action-executor] AUTO_REFRAME failed:", e);
+			}
+			break;
+		}
 
 		default:
 			console.warn(`[ai-action-executor] Unknown action type: ${action.type}`);
 	}
 }
 
-export function executeActions(actions: EditorAction[]): void {
+export async function executeActions(actions: EditorAction[]): Promise<void> {
 	for (const action of actions) {
-		executeAction(action);
+		await executeAction(action);
 	}
 }

@@ -24,9 +24,11 @@ class SetModelRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str
+    message: str | None = None
+    messages: list[dict[str, str]] | None = None
     system: str | None = None
     model: str | None = None
+
 
 
 class LLMStatusResponse(BaseModel):
@@ -45,16 +47,29 @@ async def llm_status() -> dict:
     status = await llm_backend.get_status()
     ollama = status["ollama"]
     tq = status["turboquant"]
+    openai = status["openai"]
+
+    available = ollama["available"] or tq["available"] or openai["available"]
+    
+    # If OpenAI is active, set the model info accordingly
+    models = ollama["models"]
+    default_model = ollama_service.default_model
+    url = ollama["url"]
+    
+    if openai["available"] and status["active_backend"] == "openai":
+        default_model = openai["model"]
+        url = openai["url"]
+        models = [{"name": openai["model"], "size": 0, "modified_at": ""}]
 
     return {
-        "available": ollama["available"] or tq["available"],
-        "url": ollama["url"],
-        "default_model": ollama_service.default_model,
+        "available": available,
+        "url": url,
+        "default_model": default_model,
         "active_backend": status["active_backend"],
         "turboquant_available": tq["available"],
         "turboquant_model": tq["active_model"],
         "kv_cache_bits": tq["kv_cache_bits"],
-        "models": ollama["models"],
+        "models": models,
     }
 
 
@@ -71,18 +86,21 @@ async def chat(request: ChatRequest) -> dict:
             detail="No LLM backend available. Start Ollama or TurboQuant service.",
         )
 
-    system_prompt = request.system or (
-        "You are a helpful video production assistant. "
-        "Help users brainstorm video ideas, write scripts, plan content, "
-        "suggest thumbnails, and improve their video projects. "
-        "Be creative, specific, and actionable. Keep responses concise."
-    )
+    if request.messages:
+        messages = list(request.messages)
+        if request.system and not any(m.get("role") == "system" for m in messages):
+            messages.insert(0, {"role": "system", "content": request.system})
+    else:
+        messages = []
+        if request.system:
+            messages.append({"role": "system", "content": request.system})
+        if request.message:
+            messages.append({"role": "user", "content": request.message})
 
     try:
-        response = await llm_backend.generate(
-            prompt=request.message,
+        response = await llm_backend.chat(
+            messages=messages,
             model=request.model,
-            system=system_prompt,
         )
         return {"response": response}
     except Exception:
@@ -104,19 +122,22 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
             detail="No LLM backend available. Start Ollama or TurboQuant service.",
         )
 
-    system_prompt = request.system or (
-        "You are a helpful video production assistant. "
-        "Help users brainstorm video ideas, write scripts, plan content, "
-        "suggest thumbnails, and improve their video projects. "
-        "Be creative, specific, and actionable. Keep responses concise."
-    )
+    if request.messages:
+        messages = list(request.messages)
+        if request.system and not any(m.get("role") == "system" for m in messages):
+            messages.insert(0, {"role": "system", "content": request.system})
+    else:
+        messages = []
+        if request.system:
+            messages.append({"role": "system", "content": request.system})
+        if request.message:
+            messages.append({"role": "user", "content": request.message})
 
     async def _stream():
         try:
-            async for token in llm_backend.generate_stream(
-                prompt=request.message,
+            async for token in llm_backend.chat_stream(
+                messages=messages,
                 model=request.model,
-                system=system_prompt,
             ):
                 yield json.dumps({"token": token}) + "\n"
             yield json.dumps({"done": True}) + "\n"

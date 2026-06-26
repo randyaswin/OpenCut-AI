@@ -172,6 +172,7 @@ export async function processMediaAssets({
 		let width: number | undefined;
 		let height: number | undefined;
 		let fps: number | undefined;
+		let codecCompatible = true;
 
 		try {
 			if (fileType === "image") {
@@ -189,12 +190,26 @@ export async function processMediaAssets({
 						? Math.round(videoInfo.fps)
 						: undefined;
 
-					thumbnailUrl = await generateThumbnail({
-						videoFile: file,
-						timeInSeconds: 1,
+					const input = new Input({
+						source: new BlobSource(file),
+						formats: ALL_FORMATS,
 					});
+					const videoTrack = await input.getPrimaryVideoTrack();
+					if (videoTrack) {
+						codecCompatible = await videoTrack.canDecode();
+					} else {
+						codecCompatible = false;
+					}
+
+					if (codecCompatible) {
+						thumbnailUrl = await generateThumbnail({
+							videoFile: file,
+							timeInSeconds: 1,
+						});
+					}
 				} catch (error) {
 					console.warn("Video processing failed", error);
+					codecCompatible = false;
 				}
 			} else if (fileType === "audio") {
 				// For audio, we don't set width/height/fps (they'll be undefined)
@@ -211,6 +226,7 @@ export async function processMediaAssets({
 				width,
 				height,
 				fps,
+				codecCompatible,
 			});
 
 			await new Promise((resolve) => setTimeout(resolve, 0));

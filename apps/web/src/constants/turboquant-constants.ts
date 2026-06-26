@@ -28,7 +28,7 @@ export const MODEL_TIERS = [
 		label: "Lite",
 		description: "Minimal footprint — runs on 4-8 GB RAM. Includes Kimi K2 Q3 (3-bit)",
 		ramRange: "4-8 GB",
-		defaultModel: "llama3.2:1b",
+		defaultModel: "llama3.1:8b",
 		quality: "Good",
 	},
 	{

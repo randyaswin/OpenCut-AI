@@ -5,10 +5,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.routes import analyze, audio, command, engagement, export, factcheck, generate, llm, podcast, sarvam, search, setup, smallest, template, transcribe, transcribe_ws, tts, turboquant, video, youtube
+from app.routes import analyze, audio, command, engagement, export, factcheck, generate, ingest, llm, podcast, sarvam, search, setup, smallest, template, transcribe, transcribe_ws, tts, turboquant, video, youtube
 
 # Configure logging
 logging.basicConfig(
@@ -72,6 +73,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Inject Cross-Origin-Resource-Policy for COEP compliance on static files
+@app.middleware("http")
+async def add_corp_header(request, call_next):
+    response: Response = await call_next(request)
+    if request.url.path.startswith("/generated"):
+        response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+    return response
+
 # Static files for generated content
 app.mount("/generated", StaticFiles(directory=settings.GENERATED_DIR), name="generated")
 
@@ -96,6 +105,7 @@ app.include_router(video.router)
 app.include_router(youtube.router)
 app.include_router(engagement.router)
 app.include_router(search.router)
+app.include_router(ingest.router)
 
 
 @app.get("/health")
@@ -121,15 +131,16 @@ async def health() -> dict:
 
     # Check Ollama models
     ollama_models: list[str] = []
-    try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            resp = await client.get(f"{settings.OLLAMA_URL}/api/tags")
-            if resp.status_code == 200:
-                online_services.append("ollama")
-                data = resp.json()
-                ollama_models = [m.get("name", "") for m in data.get("models", [])]
-    except Exception:
-        pass
+    if settings.AI_LLM_BACKEND != "openai":
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                resp = await client.get(f"{settings.OLLAMA_URL}/api/tags")
+                if resp.status_code == 200:
+                    online_services.append("ollama")
+                    data = resp.json()
+                    ollama_models = [m.get("name", "") for m in data.get("models", [])]
+        except Exception:
+            pass
 
     import asyncio
     await asyncio.gather(
@@ -231,6 +242,9 @@ async def services_health() -> dict:
             results[name] = {"status": "stopped", "detail": "Not reachable"}
 
     async def _check_ollama() -> None:
+        if settings.AI_LLM_BACKEND == "openai":
+            results["ollama"] = {"status": "disabled", "detail": "Disabled in OpenAI backend mode"}
+            return
         try:
             async with httpx.AsyncClient(timeout=5) as client:
                 resp = await client.get(settings.OLLAMA_URL)

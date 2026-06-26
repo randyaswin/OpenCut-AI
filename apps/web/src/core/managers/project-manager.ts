@@ -30,6 +30,9 @@ import {
 import { DEFAULT_TIMELINE_VIEW_STATE } from "@/constants/timeline-constants";
 import { loadFonts } from "@/lib/fonts/google-fonts";
 import { collectFontFamilies } from "@/lib/timeline/element-utils";
+import { useTranscriptStore } from "@/stores/transcript-store";
+import { useBackgroundTasksStore } from "@/stores/background-tasks-store";
+import { aiClient } from "@/lib/ai-client";
 
 export interface MigrationState {
 	isMigrating: boolean;
@@ -58,6 +61,7 @@ export class ProjectManager {
 		result: null,
 	};
 	private exportCancelRequested = false;
+	private activeIngestPolls = new Map<string, NodeJS.Timeout>();
 
 	constructor(private editor: EditorCore) {}
 
@@ -125,6 +129,12 @@ export class ProjectManager {
 	}
 
 	async loadProject({ id }: { id: string }): Promise<void> {
+		// Clear existing polls
+		for (const [_, interval] of this.activeIngestPolls.entries()) {
+			clearInterval(interval);
+		}
+		this.activeIngestPolls.clear();
+
 		if (!this.isInitialized) {
 			this.isLoading = true;
 			this.notify();
@@ -155,6 +165,46 @@ export class ProjectManager {
 
 			await this.editor.media.loadProjectMedia({ projectId: id });
 
+			// Fetch metadata for all loaded assets
+			const assets = this.editor.media.getAssets();
+			for (const asset of assets) {
+				try {
+					const res = await fetch(`/api/assets/${asset.id}/metadata`);
+					if (res.ok) {
+						const data = await res.json();
+						if (data) {
+							// Populate transcript store if available
+							if (data.transcripts && data.transcripts.length > 0) {
+								const transcriptData = data.transcripts[0];
+								if (transcriptData && transcriptData.segments) {
+									useTranscriptStore.getState().setSegments(transcriptData.segments as any);
+								}
+							}
+							
+							// Check ingest status
+							if (data.status === "pending" || data.status === "processing") {
+								useBackgroundTasksStore.getState().addTask({
+									id: `ingest-${asset.id}`,
+									type: "ingest",
+									label: `AI Ingest: ${asset.name}`,
+									progress: "Processing...",
+								});
+								this.startIngestPolling(id, asset.id, asset.name);
+							}
+
+							if (data.normalizedUrl) {
+								this.editor.media.fetchNormalizedAsset({
+									assetId: asset.id,
+									normalizedUrl: data.normalizedUrl,
+								}).catch(console.error);
+							}
+						}
+					}
+				} catch (e) {
+					console.error("Failed to load metadata for asset", asset.id, e);
+				}
+			}
+
 			const allTracks = (project.scenes ?? []).flatMap((scene) => scene.tracks);
 			await loadFonts({ families: collectFontFamilies({ tracks: allTracks }) });
 
@@ -172,6 +222,157 @@ export class ProjectManager {
 			this.notify();
 			this.editor.save.resume();
 		}
+	}
+
+	private startIngestPolling(projectId: string, assetId: string, assetName: string) {
+		if (this.activeIngestPolls.has(assetId)) {
+			return; // Already polling
+		}
+
+		const ingestTaskId = `ingest-${assetId}`;
+		
+		const pollInterval = setInterval(async () => {
+			try {
+				// Fetch metadata to check database status
+				const metadataRes = await fetch(`/api/assets/${assetId}/metadata`);
+				if (metadataRes.ok) {
+					const data = await metadataRes.json();
+					if (data) {
+						const currentAssets = this.editor.media.getAssets();
+						const currentAsset = currentAssets.find((a) => a.id === assetId);
+						
+						if (currentAsset) {
+							const updates: any = {};
+							let shouldUpdate = false;
+
+							if (data.normalizedUrl && data.normalizedUrl !== currentAsset.normalizedUrl) {
+								updates.normalizedUrl = data.normalizedUrl;
+								shouldUpdate = true;
+							}
+							if (data.thumbnailUrl && data.thumbnailUrl !== currentAsset.thumbnailUrl) {
+								updates.thumbnailUrl = data.thumbnailUrl;
+								shouldUpdate = true;
+							}
+							if (data.metadata) {
+								const format = data.metadata.format || {};
+								const videoStream = (data.metadata.streams || []).find((s: any) => s.codec_type === 'video');
+								
+								if (format.duration && currentAsset.duration === undefined) {
+									updates.duration = parseFloat(format.duration);
+									shouldUpdate = true;
+								}
+								if (videoStream) {
+									if (videoStream.width && currentAsset.width === undefined) {
+										updates.width = parseInt(videoStream.width);
+										shouldUpdate = true;
+									}
+									if (videoStream.height && currentAsset.height === undefined) {
+										updates.height = parseInt(videoStream.height);
+										shouldUpdate = true;
+									}
+									if (videoStream.r_frame_rate && currentAsset.fps === undefined) {
+										const [num, den] = videoStream.r_frame_rate.split('/').map(Number);
+										if (den) {
+											updates.fps = Math.round(num / den);
+											shouldUpdate = true;
+										}
+									}
+								}
+							}
+
+							if (shouldUpdate) {
+								this.editor.media.updateMediaAsset({
+									projectId,
+									id: assetId,
+									updates,
+								});
+							}
+
+							if (data.normalizedUrl) {
+								this.editor.media.fetchNormalizedAsset({
+									assetId,
+									normalizedUrl: data.normalizedUrl,
+								}).catch(console.error);
+							}
+						}
+
+						if (data.status === "completed" || data.status === "error" || data.status === "failed") {
+							clearInterval(pollInterval);
+							this.activeIngestPolls.delete(assetId);
+							
+							if (data.status === "completed") {
+								useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+									status: "completed",
+									progress: "Done",
+									completedAt: Date.now(),
+								});
+
+								// Final update
+								const finalUpdates: any = {};
+								if (data.normalizedUrl) finalUpdates.normalizedUrl = data.normalizedUrl;
+								if (data.thumbnailUrl) finalUpdates.thumbnailUrl = data.thumbnailUrl;
+								if (data.metadata) {
+									const format = data.metadata.format || {};
+									const videoStream = (data.metadata.streams || []).find((s: any) => s.codec_type === 'video');
+									if (format.duration) finalUpdates.duration = parseFloat(format.duration);
+									if (videoStream) {
+										if (videoStream.width) finalUpdates.width = parseInt(videoStream.width);
+										if (videoStream.height) finalUpdates.height = parseInt(videoStream.height);
+										if (videoStream.r_frame_rate) {
+											const [num, den] = videoStream.r_frame_rate.split('/').map(Number);
+											if (den) finalUpdates.fps = Math.round(num / den);
+										}
+									}
+								}
+								this.editor.media.updateMediaAsset({
+									projectId,
+									id: assetId,
+									updates: finalUpdates,
+								});
+
+								if (data.transcripts && data.transcripts.length > 0) {
+									const transcriptData = data.transcripts[0];
+									if (transcriptData && transcriptData.segments) {
+										useTranscriptStore.getState().setSegments(transcriptData.segments as any);
+									}
+								}
+							} else {
+								useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+									status: "error",
+									error: "Ingest failed",
+									completedAt: Date.now(),
+								});
+							}
+							return;
+						}
+
+						if (data.status === "processing") {
+							try {
+								const analyzeStatus = await aiClient.pollIngestStatus(`analyze-${assetId}`);
+								useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+									progress: analyzeStatus.progress ? `AI: ${analyzeStatus.progress}` : "Analyzing (AI)...",
+								});
+							} catch {
+								useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+									progress: "Analyzing (AI)...",
+								});
+							}
+							return;
+						}
+					}
+				}
+
+				// Fallback to checking the normalization job status
+				const status = await aiClient.pollIngestStatus(assetId);
+				useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+					progress: status.progress || "Processing...",
+				});
+			} catch (err: any) {
+				console.error("Error polling ingest status on reload:", err);
+			}
+		}, 3000);
+
+		this.activeIngestPolls.set(assetId, pollInterval);
 	}
 
 	async saveCurrentProject(): Promise<void> {

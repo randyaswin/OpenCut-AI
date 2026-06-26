@@ -3,13 +3,14 @@ import { useEditor } from "@/hooks/use-editor";
 import { useTranscriptStore } from "@/stores/transcript-store";
 import { useBackgroundTasksStore } from "@/stores/background-tasks-store";
 import { aiClient } from "@/lib/ai-client";
-import { executeAction } from "@/lib/ai-action-executor";
+import { executeAction, isDestructiveAction } from "@/lib/ai-action-executor";
 import {
 	COPILOT_SYSTEM_PROMPT,
 	type CopilotPlan,
 	type CopilotStep,
 	type CopilotStepStatus,
 } from "@/lib/copilot/copilot-types";
+import { runAgentLoop } from "@/lib/copilot/agent-loop";
 import { generateUUID } from "@/utils/id";
 import { toast } from "sonner";
 
@@ -44,56 +45,53 @@ export function useCopilot() {
 	const [plan, setPlan] = useState<CopilotPlan | null>(null);
 	const [isPlanning, setIsPlanning] = useState(false);
 	const [isExecuting, setIsExecuting] = useState(false);
+	const [thinkingText, setThinkingText] = useState("");
+	const [agentIteration, setAgentIteration] = useState(0);
 	const cancelledRef = useRef(false);
 
 	const createPlan = useCallback(
 		async (goal: string) => {
 			setIsPlanning(true);
 			setPlan(null);
+			setThinkingText("");
+			setAgentIteration(0);
 
 			const taskId = `copilot-${Date.now()}`;
 			bgTasks.addTask({
 				id: taskId,
 				type: "broll-suggestions",
 				label: "AI Co-Pilot",
-				progress: "Creating plan...",
+				progress: "Starting agent loop...",
 			});
 
 			try {
-				const context = buildProjectContext(editor);
+				const loopResult = await runAgentLoop({
+					goal,
+					systemPrompt: COPILOT_SYSTEM_PROMPT,
+					editor,
+					onToken: (token, turn) => {
+						setAgentIteration(turn);
+						setThinkingText((prev) => prev + token);
+					},
+					onToolCall: (toolName, params, turn) => {
+						setAgentIteration(turn);
+						setThinkingText((prev) => prev + `\n\n> 🛠️ **Tool Call:** Calling \`${toolName}\`... \n\n`);
+						bgTasks.updateTask(taskId, {
+							progress: `Turn ${turn}: Tool Call ${toolName}...`,
+						});
+					},
+					maxIterations: 50,
+				});
 
-				const response = await aiClient.chat(
-					`Goal: ${goal}\n\nCurrent project state:\n${JSON.stringify(context, null, 2)}`,
-					COPILOT_SYSTEM_PROMPT,
-				);
-
-				const jsonMatch = response.response.match(/\{[\s\S]*\}/);
-				if (!jsonMatch) {
-					throw new Error("AI did not return a valid plan");
+				if (!loopResult.plan) {
+					throw new Error("AI Agent did not return a valid plan");
 				}
 
-				const parsed = JSON.parse(jsonMatch[0]);
-				const steps: CopilotStep[] = (parsed.steps ?? []).map(
-					(s: any, i: number) => ({
-						id: s.id ?? `step-${i + 1}`,
-						description: s.description ?? `Step ${i + 1}`,
-						action: s.action,
-						status: "pending" as CopilotStepStatus,
-					}),
-				);
-
-				const copilotPlan: CopilotPlan = {
-					goal,
-					steps,
-					estimatedTime: parsed.estimatedTime ?? "A few seconds",
-					requiresConfirmation: parsed.requiresConfirmation ?? true,
-				};
-
-				setPlan(copilotPlan);
+				setPlan(loopResult.plan);
 
 				bgTasks.updateTask(taskId, {
 					status: "completed",
-					progress: `Plan created: ${steps.length} steps`,
+					progress: `Plan created: ${loopResult.plan.steps.length} steps`,
 					completedAt: Date.now(),
 				});
 			} catch (err) {
@@ -151,7 +149,7 @@ export function useCopilot() {
 
 			try {
 				if (step.action) {
-					executeAction(step.action);
+					await executeAction(step.action);
 				}
 
 				setPlan((prev) => {
@@ -203,6 +201,8 @@ export function useCopilot() {
 		setPlan(null);
 		setIsPlanning(false);
 		setIsExecuting(false);
+		setThinkingText("");
+		setAgentIteration(0);
 		cancelledRef.current = false;
 	}, []);
 
@@ -210,6 +210,8 @@ export function useCopilot() {
 		plan,
 		isPlanning,
 		isExecuting,
+		thinkingText,
+		agentIteration,
 		createPlan,
 		executePlan,
 		cancel,

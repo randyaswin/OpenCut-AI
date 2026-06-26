@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.utils.openai_client import OpenAIClient
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +89,26 @@ class LLMBackend:
             return False
         if mode == "turboquant":
             return await self._is_turboquant_ready()
+        if mode == "openai":
+            return False  # Handled separately
         # "auto" — use TurboQuant when available, fall back to Ollama
         return await self._is_turboquant_ready()
+
+    def _should_use_openai(self) -> bool:
+        """Determine if we should route to OpenAI based on config."""
+        mode = self.backend_mode
+        if mode == "openai":
+            return bool(settings.OPENAI_API_KEY)
+        if mode == "auto":
+            return bool(settings.OPENAI_API_KEY)
+        return False
+
+    def _get_openai_client(self) -> OpenAIClient:
+        return OpenAIClient(
+            base_url=settings.OPENAI_BASE_URL,
+            api_key=settings.OPENAI_API_KEY,
+            model=settings.OPENAI_MODEL,
+        )
 
     def reset_cache(self) -> None:
         """Force re-check of TurboQuant availability on next request."""
@@ -266,6 +285,54 @@ class LLMBackend:
                     except (json.JSONDecodeError, IndexError):
                         continue
 
+    # ── OpenAI methods ────────────────────────────────────────────────
+
+    async def _openai_generate(
+        self,
+        prompt: str,
+        system: str | None = None,
+    ) -> str:
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        client = self._get_openai_client()
+        resp = await client.chat_completion(messages=messages, temperature=0.7)
+        choices = resp.get("choices", [])
+        if choices:
+            return choices[0].get("message", {}).get("content", "")
+        return ""
+
+    async def _openai_chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+    ) -> str:
+        client = self._get_openai_client()
+        resp = await client.chat_completion(
+            messages=messages, 
+            temperature=temperature if temperature is not None else 0.7
+        )
+        choices = resp.get("choices", [])
+        if choices:
+            return choices[0].get("message", {}).get("content", "")
+        return ""
+
+    async def _openai_generate_stream(
+        self,
+        prompt: str,
+        system: str | None = None,
+    ) -> AsyncIterator[str]:
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        client = self._get_openai_client()
+        async for token in client.chat_completion_stream(messages=messages, temperature=0.7):
+            yield token
+
     # ── Unified public interface ──────────────────────────────────────
 
     async def generate(
@@ -275,14 +342,27 @@ class LLMBackend:
         system: str | None = None,
         format: str | None = None,
     ) -> str:
-        """Generate a completion — routes to TurboQuant or Ollama."""
+        """Generate a completion — routes to TurboQuant, OpenAI, or Ollama."""
         if await self._should_use_turboquant():
             try:
                 logger.debug("Routing generate to TurboQuant")
                 return await self._tq_generate(prompt, model, system)
             except Exception:
-                logger.warning("TurboQuant generate failed, falling back to Ollama")
+                logger.warning("TurboQuant generate failed, falling back to next available backend")
                 self._tq_available = False
+
+        if self._should_use_openai():
+            try:
+                logger.debug("Routing generate to OpenAI")
+                return await self._openai_generate(prompt, system)
+            except Exception as e:
+                if self.backend_mode == "openai":
+                    logger.error(f"OpenAI generate failed: {e}")
+                    raise
+                logger.warning(f"OpenAI generate failed: {e}, falling back to Ollama")
+
+        if self.backend_mode == "openai":
+            raise RuntimeError("OpenAI backend is configured but not available (missing API key or client error).")
 
         return await self._ollama_generate(prompt, model, system, format)
 
@@ -300,8 +380,23 @@ class LLMBackend:
                     yield token
                 return
             except Exception:
-                logger.warning("TurboQuant stream failed, falling back to Ollama")
+                logger.warning("TurboQuant stream failed, falling back to next available backend")
                 self._tq_available = False
+
+        if self._should_use_openai():
+            try:
+                logger.debug("Routing generate_stream to OpenAI")
+                async for token in self._openai_generate_stream(prompt, system):
+                    yield token
+                return
+            except Exception as e:
+                if self.backend_mode == "openai":
+                    logger.error(f"OpenAI stream failed: {e}")
+                    raise
+                logger.warning(f"OpenAI stream failed: {e}, falling back to Ollama")
+
+        if self.backend_mode == "openai":
+            raise RuntimeError("OpenAI backend is configured but not available (missing API key or client error).")
 
         async for token in self._ollama_generate_stream(prompt, model, system):
             yield token
@@ -313,7 +408,7 @@ class LLMBackend:
         system: str | None = None,
         _retries: int = 1,
     ) -> dict[str, Any]:
-        """Generate a JSON response — routes to TurboQuant or Ollama.
+        """Generate a JSON response — routes to TurboQuant, OpenAI, or Ollama.
 
         Retries once on parse failure since smaller models sometimes
         produce malformed JSON on the first attempt.
@@ -324,8 +419,22 @@ class LLMBackend:
                 raw = await self._tq_generate(prompt, model, system)
                 return _parse_json_response(raw)
             except Exception:
-                logger.warning("TurboQuant generate_json failed, falling back to Ollama")
+                logger.warning("TurboQuant generate_json failed, falling back to next available backend")
                 self._tq_available = False
+
+        if self._should_use_openai():
+            try:
+                logger.debug("Routing generate_json to OpenAI")
+                raw = await self._openai_generate(prompt, system)
+                return _parse_json_response(raw)
+            except Exception as e:
+                if self.backend_mode == "openai":
+                    logger.error(f"OpenAI generate_json failed: {e}")
+                    raise
+                logger.warning(f"OpenAI generate_json failed: {e}, falling back to Ollama")
+
+        if self.backend_mode == "openai":
+            raise RuntimeError("OpenAI backend is configured but not available (missing API key or client error).")
 
         # Ollama path with format="json"
         last_error: Exception | None = None
@@ -339,6 +448,10 @@ class LLMBackend:
                     logger.warning("JSON parse failed (attempt %d), retrying: %s", attempt + 1, e)
                     continue
                 raise
+            except Exception as e:
+                if self.backend_mode == "openai":
+                    raise
+                raise
 
     async def chat(
         self,
@@ -346,20 +459,120 @@ class LLMBackend:
         model: str | None = None,
         temperature: float | None = None,
     ) -> str:
-        """Multi-turn chat — routes to TurboQuant or Ollama."""
+        """Multi-turn chat — routes to TurboQuant, OpenAI, or Ollama."""
         if await self._should_use_turboquant():
             try:
                 logger.debug("Routing chat to TurboQuant")
                 return await self._tq_chat(messages, model, temperature)
             except Exception:
-                logger.warning("TurboQuant chat failed, falling back to Ollama")
+                logger.warning("TurboQuant chat failed, falling back to next available backend")
                 self._tq_available = False
 
+        if self._should_use_openai():
+            try:
+                logger.debug("Routing chat to OpenAI")
+                return await self._openai_chat(messages, temperature)
+            except Exception as e:
+                if self.backend_mode == "openai":
+                    logger.error(f"OpenAI chat failed: {e}")
+                    raise
+                logger.warning(f"OpenAI chat failed: {e}, falling back to Ollama")
+
+        if self.backend_mode == "openai":
+            raise RuntimeError("OpenAI backend is configured but not available (missing API key or client error).")
+
         return await self._ollama_chat(messages, model, temperature)
+
+    async def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        model: str | None = None,
+        temperature: float | None = None,
+    ) -> AsyncIterator[str]:
+        """Multi-turn streaming chat — routes to TurboQuant, OpenAI, or Ollama."""
+        if await self._should_use_turboquant():
+            try:
+                logger.debug("Routing chat_stream to TurboQuant")
+                async with httpx.AsyncClient(timeout=httpx.Timeout(300, connect=10.0)) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{self.turboquant_url}/v1/chat/completions",
+                        json={
+                            "model": model,
+                            "messages": messages,
+                            "max_tokens": 2048,
+                            "temperature": temperature if temperature is not None else 0.7,
+                            "stream": True,
+                        },
+                    ) as resp:
+                        resp.raise_for_status()
+                        async for line in resp.aiter_lines():
+                            if not line or not line.startswith("data: "):
+                                continue
+                            data_str = line[6:]
+                            if data_str.strip() == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(data_str)
+                                delta = data.get("choices", [{}])[0].get("delta", {})
+                                token = delta.get("content", "")
+                                if token:
+                                    yield token
+                            except (json.JSONDecodeError, IndexError):
+                                continue
+                return
+            except Exception:
+                logger.warning("TurboQuant chat_stream failed, falling back to next available backend")
+                self._tq_available = False
+
+        if self._should_use_openai():
+            try:
+                logger.debug("Routing chat_stream to OpenAI")
+                client = self._get_openai_client()
+                async for token in client.chat_completion_stream(
+                    messages=messages, 
+                    temperature=temperature if temperature is not None else 0.7
+                ):
+                    yield token
+                return
+            except Exception as e:
+                if self.backend_mode == "openai":
+                    logger.error(f"OpenAI chat_stream failed: {e}")
+                    raise
+                logger.warning(f"OpenAI chat_stream failed: {e}, falling back to Ollama")
+
+        if self.backend_mode == "openai":
+            raise RuntimeError("OpenAI backend is configured but not available (missing API key or client error).")
+
+        # Ollama stream chat path
+        payload: dict[str, Any] = {
+            "model": model or self.default_model,
+            "messages": messages,
+            "stream": True,
+        }
+        if temperature is not None:
+            payload["options"] = {"temperature": temperature}
+            
+        async with self._ollama_client() as client:
+            async with client.stream("POST", "/api/chat", json=payload) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        token = data.get("message", {}).get("content", "")
+                        if token:
+                            yield token
+                    except json.JSONDecodeError:
+                        continue
+
 
     async def check_available(self) -> bool:
         """Check if any LLM backend is available."""
         if await self._is_turboquant_ready():
+            return True
+        if self._should_use_openai():
             return True
         # Fall back to checking Ollama
         try:
@@ -375,14 +588,15 @@ class LLMBackend:
 
         ollama_available = False
         ollama_models: list[dict] = []
-        try:
-            async with self._ollama_client() as client:
-                resp = await client.get("/api/tags")
-                if resp.status_code == 200:
-                    ollama_available = True
-                    ollama_models = resp.json().get("models", [])
-        except Exception:
-            pass
+        if self.backend_mode != "openai":
+            try:
+                async with self._ollama_client() as client:
+                    resp = await client.get("/api/tags")
+                    if resp.status_code == 200:
+                        ollama_available = True
+                        ollama_models = resp.json().get("models", [])
+            except Exception:
+                pass
 
         tq_model = None
         if tq_ready:
@@ -394,11 +608,22 @@ class LLMBackend:
             except Exception:
                 pass
 
-        active_backend = "turboquant" if tq_ready and self.backend_mode != "ollama" else "ollama"
+        openai_available = self._should_use_openai()
+
+        active_backend = "ollama"
+        if tq_ready and self.backend_mode != "ollama" and self.backend_mode != "openai":
+            active_backend = "turboquant"
+        elif openai_available and self.backend_mode != "ollama":
+            active_backend = "openai"
 
         return {
             "active_backend": active_backend,
             "backend_mode": self.backend_mode,
+            "openai": {
+                "available": openai_available,
+                "model": settings.OPENAI_MODEL if openai_available else None,
+                "url": settings.OPENAI_BASE_URL if openai_available else None,
+            },
             "ollama": {
                 "available": ollama_available,
                 "url": self.ollama_url,

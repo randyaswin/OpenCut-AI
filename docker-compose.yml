@@ -49,19 +49,19 @@ services:
 
   # --- AI Services ---
 
-  ollama:
-    image: ollama/ollama:latest
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   restart: unless-stopped
+  #   ports:
+  #     - "11435:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   healthcheck:
+  #     test: ["CMD", "ollama", "list"]
+  #     interval: 15s
+  #     timeout: 10s
+  #     retries: 10
+  #     start_period: 30s
 
   ai-backend:
     build:
@@ -70,9 +70,12 @@ services:
     restart: unless-stopped
     ports:
       - "8420:8420"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - OPENCUTAI_OLLAMA_URL=http://ollama:11434
       - OPENCUTAI_PORT=8420
+      - OPENCUTAI_REDIS_URL=redis://redis:6379
       - OPENCUTAI_CORS_ORIGINS=["http://localhost:3000","http://localhost:3100","http://localhost:5173"]
       # LLM model for Ollama. Kimi K2 options:
       #   kimi-k2:latest (Q3, ~1.4GB), kimi-k2:q4_K_M (Q4, ~3GB), kimi-k2:q5_K_M (Q5, ~7GB)
@@ -92,11 +95,27 @@ services:
       - OPENCUTAI_KV_CACHE_BITS=${KV_CACHE_BITS:-4}
       - OPENCUTAI_AI_LLM_BACKEND=${AI_LLM_BACKEND:-auto}
       - OPENCUTAI_SARVAM_API_KEY=${SARVAM_API_KEY:-}
+      - OPENCUTAI_SMALLEST_API_KEY=${SMALLEST_API_KEY:-}
+      - OPENCUTAI_SEEDANCE_API_KEY=${SEEDANCE_API_KEY:-}
+      - OPENCUTAI_REPLICATE_API_TOKEN=${REPLICATE_API_TOKEN:-}
+      - OPENCUTAI_STABILITY_API_KEY=${STABILITY_API_KEY:-}
+      - OPENCUTAI_LUMA_API_KEY=${LUMA_API_KEY:-}
+      - OPENCUTAI_OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENCUTAI_OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - OPENCUTAI_OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - OPENCUTAI_OPENAI_IMAGE_MODEL=${OPENAI_IMAGE_MODEL:-dall-e-3}
+      - OPENCUTAI_OPENAI_VISION_CAPABLE=${OPENAI_VISION_CAPABLE:-false}
+      - OPENCUTAI_TTS_BACKEND=${OPENCUTAI_TTS_BACKEND:-auto}
+      - OPENCUTAI_OPENAI_TTS_MODEL=${OPENCUTAI_OPENAI_TTS_MODEL:-tts-1}
+      - OPENCUTAI_OPENAI_TTS_VOICE=${OPENCUTAI_OPENAI_TTS_VOICE:-alloy}
+      - OPENCUTAI_IMAGE_BACKEND=${OPENCUTAI_IMAGE_BACKEND:-auto}
+
     volumes:
       - ai_models:/app/models
       - ai_generated:/app/generated
+      - ai_ingest_data:/app/ingest_data
     depends_on:
-      ollama:
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8420/health || exit 1"]
@@ -104,6 +123,35 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  ai-worker:
+    build:
+      context: ./services/ai-backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+    command: ["rq", "worker", "ingest", "--url", "redis://redis:6379", "--with-scheduler"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - OPENCUTAI_OLLAMA_URL=http://ollama:11434
+      - OPENCUTAI_WHISPER_SERVICE_URL=http://whisper-service:8421
+      - OPENCUTAI_CLIP_SERVICE_URL=http://clip-service:8426
+      - OPENCUTAI_FACE_SERVICE_URL=http://face-service:8425
+      - OPENCUTAI_OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENCUTAI_OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - OPENCUTAI_OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - OPENCUTAI_OPENAI_IMAGE_MODEL=${OPENAI_IMAGE_MODEL:-dall-e-3}
+      - OPENCUTAI_OPENAI_VISION_CAPABLE=${OPENAI_VISION_CAPABLE:-false}
+      - NEXT_PUBLIC_SITE_URL=http://web:3000
+    volumes:
+      - ai_models:/app/models
+      - ai_generated:/app/generated
+      - ai_ingest_data:/app/ingest_data
+    depends_on:
+      redis:
+        condition: service_healthy
 
   whisper-service:
     build:
@@ -261,13 +309,24 @@ services:
       args:
         - FREESOUND_CLIENT_ID=${FREESOUND_CLIENT_ID}
         - FREESOUND_API_KEY=${FREESOUND_API_KEY}
+        - NEXT_PUBLIC_SARVAM_API_KEY=${SARVAM_API_KEY}
+        - NEXT_PUBLIC_SMALLEST_API_KEY=${SMALLEST_API_KEY}
+        - NEXT_PUBLIC_SEEDANCE_API_KEY=${SEEDANCE_API_KEY}
+        - NEXT_PUBLIC_REPLICATE_API_TOKEN=${REPLICATE_API_TOKEN}
+        - NEXT_PUBLIC_STABILITY_API_KEY=${STABILITY_API_KEY}
+        - NEXT_PUBLIC_LUMA_API_KEY=${LUMA_API_KEY}
+        - NEXT_PUBLIC_OPENAI_API_KEY=${OPENAI_API_KEY}
+        - NEXT_PUBLIC_OPENAI_BASE_URL=${OPENAI_BASE_URL}
+        - NEXT_PUBLIC_OPENAI_MODEL=${OPENAI_MODEL}
+        - NEXT_PUBLIC_OPENAI_IMAGE_MODEL=${OPENAI_IMAGE_MODEL}
+        - NEXT_PUBLIC_OPENAI_VISION_CAPABLE=${OPENAI_VISION_CAPABLE}
     restart: unless-stopped
     ports:
       - "3100:3000"
     environment:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://opencut:opencut@db:5432/opencut
-      - BETTER_AUTH_SECRET=your-production-secret-key-here
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-your-production-secret-key-here}
       - UPSTASH_REDIS_REST_URL=http://serverless-redis-http:80
       - UPSTASH_REDIS_REST_TOKEN=example_token
       - NEXT_PUBLIC_SITE_URL=http://localhost:3100
@@ -285,6 +344,11 @@ services:
       - NEXT_PUBLIC_WHISPER_SERVICE_URL=http://localhost:8421
       - NEXT_PUBLIC_TTS_SERVICE_URL=http://localhost:8422
       - NEXT_PUBLIC_IMAGE_SERVICE_URL=http://localhost:8423
+      - NEXT_PUBLIC_OPENAI_API_KEY=${OPENAI_API_KEY}
+      - NEXT_PUBLIC_OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - NEXT_PUBLIC_OPENAI_MODEL=${OPENAI_MODEL}
+      - NEXT_PUBLIC_OPENAI_IMAGE_MODEL=${OPENAI_IMAGE_MODEL}
+      - NEXT_PUBLIC_OPENAI_VISION_CAPABLE=${OPENAI_VISION_CAPABLE}
     depends_on:
       db:
         condition: service_healthy
@@ -293,7 +357,7 @@ services:
       ai-backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -312,6 +376,7 @@ volumes:
   turboquant_models:
   image_generated:
   clip_models:
+  ai_ingest_data:
 
 networks:
   default:

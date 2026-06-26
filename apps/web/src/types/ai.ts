@@ -59,7 +59,10 @@ export type EditorActionType =
 	| "NORMALIZE_AUDIO"
 	| "AUTO_DUCK"
 	| "COLOR_CORRECT"
-	| "EXPORT_PROJECT";
+	| "AUTO_REFRAME"
+	| "EXPORT_PROJECT"
+	| "ADD_EFFECT"
+	| "ADD_MEDIA_TO_TIMELINE";
 
 export interface EditorAction {
 	type: EditorActionType;

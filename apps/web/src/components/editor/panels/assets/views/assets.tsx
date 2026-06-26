@@ -39,6 +39,10 @@ import {
 	useAssetsPanelStore,
 } from "@/stores/assets-panel-store";
 import { useSearchStore } from "@/stores/search-store";
+import { useBackgroundTasksStore } from "@/stores/background-tasks-store";
+import { isProblematicFormat, normalizeVideo } from "@/lib/media/ffmpeg-normalizer";
+import { Spinner } from "@/components/ui/spinner";
+import { aiClient } from "@/lib/ai-client";
 import type { MediaAsset } from "@/types/assets";
 import { cn } from "@/utils/ui";
 import {
@@ -92,10 +96,244 @@ export function MediaView() {
 					setProgress(progress.progress),
 			});
 			for (const asset of processedAssets) {
-				await editor.media.addMediaAsset({
+				const mediaId = await editor.media.addMediaAsset({
 					projectId: activeProject.metadata.id,
 					asset,
 				});
+
+				// Client-side normalization has been moved to the backend ingest pipeline.
+				// We no longer call `normalizeVideo` here.
+
+				// Start the AI ingest pipeline
+				if (asset.file.type.startsWith("video/") || asset.file.type.startsWith("audio/")) {
+					const ingestTaskId = `ingest-${mediaId}`;
+					useBackgroundTasksStore.getState().addTask({
+						id: ingestTaskId,
+						type: "ingest",
+						label: `AI Ingest: ${asset.name}`,
+						progress: "Starting...",
+					});
+
+					const webhookUrl = `${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/api/webhooks/ingest-complete`;
+					
+					// Mark as pending in DB
+					fetch(`/api/assets/${mediaId}/metadata`, {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ status: "pending" }),
+					}).catch(console.error);
+
+					const performIngest = (fileToUpload: File) => {
+						useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+							progress: "Uploading to AI...",
+						});
+
+						aiClient.ingestAsset(mediaId, fileToUpload, webhookUrl)
+						.then((res) => {
+							const jobId = res.job_id;
+							const pollInterval = setInterval(async () => {
+								try {
+									// Fetch metadata to check database status
+									const metadataRes = await fetch(`/api/assets/${mediaId}/metadata`);
+									if (metadataRes.ok) {
+										const data = await metadataRes.json();
+										if (data) {
+											const currentAssets = editor.media.getAssets();
+											const currentAsset = currentAssets.find((a) => a.id === mediaId);
+											
+											if (currentAsset) {
+												const updates: any = {};
+												let shouldUpdate = false;
+
+												if (data.normalizedUrl && data.normalizedUrl !== currentAsset.normalizedUrl) {
+													updates.normalizedUrl = data.normalizedUrl;
+													shouldUpdate = true;
+												}
+												if (data.thumbnailUrl && data.thumbnailUrl !== currentAsset.thumbnailUrl) {
+													updates.thumbnailUrl = data.thumbnailUrl;
+													shouldUpdate = true;
+												}
+												if (data.metadata) {
+													const format = data.metadata.format || {};
+													const videoStream = (data.metadata.streams || []).find((s: any) => s.codec_type === 'video');
+													
+													if (format.duration && currentAsset.duration === undefined) {
+														updates.duration = parseFloat(format.duration);
+														shouldUpdate = true;
+													}
+													if (videoStream) {
+														if (videoStream.width && currentAsset.width === undefined) {
+															updates.width = parseInt(videoStream.width);
+															shouldUpdate = true;
+														}
+														if (videoStream.height && currentAsset.height === undefined) {
+															updates.height = parseInt(videoStream.height);
+															shouldUpdate = true;
+														}
+														if (videoStream.r_frame_rate && currentAsset.fps === undefined) {
+															const [num, den] = videoStream.r_frame_rate.split('/').map(Number);
+															if (den) {
+																updates.fps = Math.round(num / den);
+																shouldUpdate = true;
+															}
+														}
+													}
+												}
+
+												if (shouldUpdate) {
+													editor.media.updateMediaAsset({
+														projectId: activeProject.metadata.id,
+														id: mediaId,
+														updates,
+													});
+												}
+
+												if (data.normalizedUrl) {
+													editor.media.fetchNormalizedAsset({
+														assetId: mediaId,
+														normalizedUrl: data.normalizedUrl,
+													}).catch(console.error);
+												}
+											}
+
+											if (data.status === "completed" || data.status === "error" || data.status === "failed") {
+												clearInterval(pollInterval);
+												
+												if (data.status === "completed") {
+													useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+														status: "completed",
+														progress: "Done",
+														completedAt: Date.now(),
+													});
+													
+													// Final update check
+													const finalUpdates: any = {};
+													if (data.normalizedUrl) finalUpdates.normalizedUrl = data.normalizedUrl;
+													if (data.thumbnailUrl) finalUpdates.thumbnailUrl = data.thumbnailUrl;
+													if (data.metadata) {
+														const format = data.metadata.format || {};
+														const videoStream = (data.metadata.streams || []).find((s: any) => s.codec_type === 'video');
+														if (format.duration) finalUpdates.duration = parseFloat(format.duration);
+														if (videoStream) {
+															if (videoStream.width) finalUpdates.width = parseInt(videoStream.width);
+															if (videoStream.height) finalUpdates.height = parseInt(videoStream.height);
+															if (videoStream.r_frame_rate) {
+																const [num, den] = videoStream.r_frame_rate.split('/').map(Number);
+																if (den) finalUpdates.fps = Math.round(num / den);
+															}
+														}
+													}
+													editor.media.updateMediaAsset({
+														projectId: activeProject.metadata.id,
+														id: mediaId,
+														updates: finalUpdates,
+													});
+
+													if (data.transcripts && data.transcripts.length > 0) {
+														const transcriptData = data.transcripts[0];
+														if (transcriptData && transcriptData.segments) {
+															const { useTranscriptStore } = await import("@/stores/transcript-store");
+															useTranscriptStore.getState().setSegments(transcriptData.segments as any);
+														}
+													}
+												} else {
+													useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+														status: "error",
+														error: "Ingest failed",
+														completedAt: Date.now(),
+													});
+												}
+												return;
+											}
+
+											if (data.status === "processing") {
+												try {
+													const analyzeStatus = await aiClient.pollIngestStatus(`analyze-${mediaId}`);
+													useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+														progress: analyzeStatus.progress ? `AI: ${analyzeStatus.progress}` : "Analyzing (AI)...",
+													});
+												} catch {
+													useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+														progress: "Analyzing (AI)...",
+													});
+												}
+												return;
+											}
+										}
+									}
+
+									// If still in pending, poll the normalization job status for progress
+									const status = await aiClient.pollIngestStatus(jobId);
+									useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+										progress: status.progress || "Processing...",
+									});
+								} catch (e) {
+									// ignore polling errors
+								}
+							}, 3000);
+						})
+						.catch((err) => {
+							useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+								status: "error",
+								error: err instanceof Error ? err.message : String(err),
+							});
+						});
+					};
+
+					if (asset.file.type.startsWith("video/")) {
+						useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+							progress: "Generating local proxy...",
+						});
+						
+						editor.media.generateProxyForAsset({
+							assetId: mediaId,
+							projectId: activeProject.metadata.id,
+							resolution: "720p",
+							onProgress: (p) => {
+								useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+									progress: `Proxy: ${Math.round(p * 100)}%`,
+								});
+							}
+						}).then(() => {
+							const currentAsset = editor.media.getAssets().find(a => a.id === mediaId);
+							performIngest(currentAsset?.proxyFile || asset.file);
+						}).catch(async (err) => {
+							console.warn("Proxy generation failed natively, falling back to WASM normalizer:", err);
+							
+							try {
+								useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+									progress: "WASM Fallback (slow)...",
+								});
+								
+								const { normalizeVideo } = await import("@/lib/media/ffmpeg-normalizer");
+								
+								const normalizedFile = await normalizeVideo(asset.file, (p) => {
+									useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+										progress: `WASM: ${Math.round(p)}%`,
+									});
+								});
+								
+								const normalizedUrl = URL.createObjectURL(normalizedFile);
+								
+								editor.media.updateMediaAsset({
+									projectId: activeProject.metadata.id,
+									id: mediaId,
+									updates: {
+										normalizedFile,
+										normalizedUrl,
+									}
+								});
+								
+								performIngest(normalizedFile);
+							} catch (fallbackErr) {
+								console.error("WASM fallback also failed, uploading raw:", fallbackErr);
+								performIngest(asset.file);
+							}
+						});
+					} else {
+						performIngest(asset.file);
+					}
+				}
 			}
 		} catch (error) {
 			console.error("Error processing files:", error);
@@ -268,6 +506,10 @@ function MediaAssetDraggable({
 		asset: MediaAsset;
 		startTime: number;
 	}) => {
+		if (asset.type === "video" && asset.codecCompatible === false && !asset.normalizedUrl) {
+			toast.warning("Video codec is incompatible and normalization is still in progress. Please wait until ingestion finishes.");
+			return;
+		}
 		const duration =
 			asset.duration ?? TIMELINE_CONSTANTS.DEFAULT_ELEMENT_DURATION;
 		const element = buildElementFromMedia({
@@ -575,6 +817,21 @@ function MediaPreview({
 	variant?: "grid" | "compact";
 }) {
 	const shouldShowDurationBadge = variant === "grid";
+	const task = useBackgroundTasksStore((s) =>
+		s.tasks.find((t) => t.id === `ingest-${item.id}` && t.status === "running")
+	);
+
+	const renderOverlay = () => {
+		if (!task) return null;
+		return (
+			<div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 z-10 p-1 text-center rounded">
+				<Spinner className="size-4 text-primary mb-1" />
+				<span className="text-[9px] text-white font-medium line-clamp-2 leading-tight">
+					{task.progress}
+				</span>
+			</div>
+		);
+	};
 
 	if (item.type === "image") {
 		return (
@@ -591,6 +848,7 @@ function MediaPreview({
 				{shouldShowDurationBadge && (
 					<MediaTypeBadge type="image" />
 				)}
+				{renderOverlay()}
 			</div>
 		);
 	}
@@ -614,33 +872,43 @@ function MediaPreview({
 							<MediaDurationBadge duration={item.duration} />
 						</>
 					)}
+					{renderOverlay()}
 				</div>
 			);
 		}
 
 		return (
-			<MediaTypePlaceholder
-				icon={Video01Icon}
-				label="Video"
-				duration={item.duration}
-				variant="muted"
-			/>
+			<div className="relative size-full">
+				<MediaTypePlaceholder
+					icon={Video01Icon}
+					label="Video"
+					duration={item.duration}
+					variant="muted"
+				/>
+				{renderOverlay()}
+			</div>
 		);
 	}
 
 	if (item.type === "audio") {
 		return (
-			<MediaTypePlaceholder
-				icon={MusicNote03Icon}
-				label="Audio"
-				duration={item.duration}
-				variant="bordered"
-			/>
+			<div className="relative size-full">
+				<MediaTypePlaceholder
+					icon={MusicNote03Icon}
+					label="Audio"
+					duration={item.duration}
+					variant="bordered"
+				/>
+				{renderOverlay()}
+			</div>
 		);
 	}
 
 	return (
-		<MediaTypePlaceholder icon={Image02Icon} label="Unknown" variant="muted" />
+		<div className="relative size-full">
+			<MediaTypePlaceholder icon={Image02Icon} label="Unknown" variant="muted" />
+			{renderOverlay()}
+		</div>
 	);
 }
 

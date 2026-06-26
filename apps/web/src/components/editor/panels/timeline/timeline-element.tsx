@@ -796,10 +796,13 @@ const ELEMENT_CONTENT_RENDERERS: Record<
 		>;
 		const audioBuffer =
 			audioElement.sourceType === "library" ? audioElement.buffer : undefined;
+		const mediaAsset = "mediaId" in audioElement ? mediaAssets.find(
+			(asset) => asset.id === audioElement.mediaId,
+		) : undefined;
 		const audioUrl =
 			audioElement.sourceType === "library"
 				? audioElement.sourceUrl
-				: mediaAssets.find((asset) => asset.id === audioElement.mediaId)?.url;
+				: mediaAsset?.normalizedUrl ?? mediaAsset?.url;
 
 		const volume = audioElement.volume ?? 1;
 		const volumeDb = volume > 0 ? Math.round(20 * Math.log10(volume)) : -60;
@@ -876,7 +879,7 @@ const ELEMENT_CONTENT_RENDERERS: Record<
 		);
 		return renderTiledMedia({
 			element: imageElement,
-			imageUrl: mediaAsset?.url,
+			imageUrl: mediaAsset?.normalizedUrl ?? mediaAsset?.url,
 			track,
 		});
 	},

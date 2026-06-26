@@ -41,8 +41,8 @@ Every major video editor sends your footage to the cloud. OpenCut AI doesn't.
 - **AI Music Generation** — Generate royalty-free background music with 15 genres, 12 moods, and 3 tempo settings. Preview and insert directly to the timeline.
 - **AI Thumbnail Generator** — Create eye-catching thumbnails from prompts or transcript analysis. 5 styles, 4 size presets, 5 color schemes, up to 4 variations at once.
 - **AI Script-to-Video** — Write a script, AI generates voiceover, visuals, and builds the timeline automatically.
-- **AI Co-Pilot Agent** — Describe your goal in plain English ("make this a 60-second reel with captions and music"). AI creates a multi-step plan, you review, then it executes. 19 action types, cancel anytime. Runs through your local LLM.
-- **AI Scene Detection** — Client-side visual scene change detection using color histogram analysis. Finds camera cuts and angle changes with before/after thumbnails. No data leaves your machine.
+- **AI Co-Pilot Agent** — Describe your goal in plain English ("make this a 60-second reel with captions and music"). AI creates a multi-step ReAct plan, you review, then it executes. 20 action types with a strict confirmation policy for destructive edits, cancel anytime. Powered by OpenAI-compatible endpoints or local LLMs.
+- **AI Scene Detection & Object Tracking** — Automatic ingestion pipeline runs YOLOv8 object detection and OpenAI Vision (or Kimi-VL) scene descriptions on every uploaded clip, giving the Copilot full visual awareness of your timeline. No data leaves your machine unless you configure external APIs.
 - **AI Auto-Color Correction** — 8 color correction profiles (Vibrant Pop, Film Look, Warm Sunset, etc.) with batch apply to all video clips.
 - **AI Video-to-Shorts Auto-Composer** — One-click: AI selects best clip, trims to target duration, sets canvas size (9:16, 1:1, 4:5), adds subtitles.
 - **Speaker-Labeled Captions** — Auto-assign color-coded speaker labels, rename speakers, apply captions to timeline.
@@ -52,7 +52,7 @@ Every major video editor sends your footage to the cloud. OpenCut AI doesn't.
 - **A/B Hook Testing** — Generate 5 hook variants from your transcript, each scored for engagement potential. Compare side-by-side and pick the best opening.
 - **Engagement Analytics Dashboard** — Track score history over time. Avg composite, grade distribution, per-signal breakdown, strongest/weakest signals, trend chart.
 - **AI Video Generation Hub** — Generate video from text, image, or video using 9 models across 5 providers (Runway Gen-3 Alpha, Pika 1.0, Kling v1.6 Pro, MiniMax, Stable Video Diffusion, Seedance 2.0, Luma Dream Machine, CogVideoX). 3 modes, 6 aspect ratios, prompt enhancement, one-click add to timeline.
-- **Smart Reframe** — AI-powered face detection generates position/scale keyframes to keep subjects centered when converting landscape to vertical. 4 presets: TikTok 9:16, Square, Instagram 4:5, YouTube 16:9.
+- **Smart Reframe** — AI-powered face and object detection generates position/scale keyframes to keep subjects (people, pets, sports, vehicles) centered when converting landscape to vertical. 4 presets: TikTok 9:16, Square, Instagram 4:5, YouTube 16:9.
 - **Chroma Key / Green Screen** — WebGL shader-based color keying with 5 presets, tolerance, softness, and spill suppression controls.
 - **Motion Tracking** — Client-side template matching (normalized cross-correlation) that generates transform keyframes. Runs entirely in the browser.
 - **Drag-to-Reorder Tracks** — Drag-and-drop track labels to reorder timeline tracks. Full undo/redo support.
@@ -94,9 +94,12 @@ Every major video editor sends your footage to the cloud. OpenCut AI doesn't.
 
 ### Infrastructure
 
+- **OpenAI-Compatible Backends** — Bring your own API key! Connect to OpenRouter, Groq, LM Studio, or vLLM to power the AI Copilot and Image Generation seamlessly.
+- **Automatic Asset Ingest Pipeline** — Every uploaded video or image is asynchronously analyzed for transcription, objects (YOLOv8), scene descriptions (Vision), and EXIF metadata, durably stored in Postgres.
+- **Format Normalization** — Built-in FFmpeg pipeline automatically detects and standardizes problematic GoPro (HEVC, GPMF) and iPhone (.MOV, HDR) footage into editor-safe formats.
 - **TurboQuant inference** — KV cache compression down to 2-bit on GPU, 3-bit on CPU, with a compute mode toggle (Auto / CPU / GPU).
 - **Kimi K2 & Kimi VL** — MoonshotAI's open-source Kimi models are fully supported: Kimi K2 (1T/32B active MoE) via Ollama GGUF (Q3/Q4/Q5) for every tier, and Kimi VL A3B (vision-language, 3B active) via TurboQuant for multimodal scene analysis.
-- **All data local** — Files stored in OPFS (Origin Private File System). Nothing leaves the browser or your server.
+- **Hybrid Storage** — Timeline files stay local in OPFS (Origin Private File System), while structured AI metadata and transcripts sync durably to the Postgres backend.
 - **Docker-ready** — One command to start the full stack. BuildKit cache mounts, CPU-only PyTorch wheels, and parallel builds keep rebuilds fast.
 
 ## Project Structure

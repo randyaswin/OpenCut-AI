@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, jsonb } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
 	id: text("id").primaryKey(),
@@ -60,3 +60,46 @@ export const verifications = pgTable("verifications", {
 		() => /* @__PURE__ */ new Date(),
 	),
 }).enableRLS();
+
+// --- Ingest Pipeline Schemas ---
+
+export const assetMetadata = pgTable("asset_metadata", {
+	id: text("id").primaryKey(),
+	assetId: text("asset_id").notNull().unique(), // The OPFS/Project asset ID
+	status: text("status").default("pending"), // 'pending', 'completed', 'error'
+	metadata: jsonb("metadata"), // EXIF/ffprobe data
+	normalizedUrl: text("normalized_url"), // URL to backend-normalized proxy
+	thumbnailUrl: text("thumbnail_url"), // URL to backend-generated thumbnail
+	createdAt: timestamp("created_at").$defaultFn(() => new Date()).notNull(),
+	updatedAt: timestamp("updated_at").$defaultFn(() => new Date()).notNull(),
+});
+
+export const transcripts = pgTable("transcripts", {
+	id: text("id").primaryKey(),
+	assetId: text("asset_id").notNull().references(() => assetMetadata.assetId, { onDelete: "cascade" }),
+	language: text("language"),
+	segments: jsonb("segments"), // Array of { start, end, text, words }
+	createdAt: timestamp("created_at").$defaultFn(() => new Date()).notNull(),
+});
+
+export const detectedObjects = pgTable("detected_objects", {
+	id: text("id").primaryKey(),
+	assetId: text("asset_id").notNull().references(() => assetMetadata.assetId, { onDelete: "cascade" }),
+	timestamp: timestamp("timestamp"), // The time in the video
+	timeOffset: text("time_offset"), // or float? Use text for now to avoid decimal precision issues, or float if supported
+	label: text("label").notNull(),
+	confidence: text("confidence"), // float stored as string or actual numeric
+	boundingBox: jsonb("bounding_box"), // { x, y, w, h }
+	createdAt: timestamp("created_at").$defaultFn(() => new Date()).notNull(),
+});
+
+export const sceneDescriptions = pgTable("scene_descriptions", {
+	id: text("id").primaryKey(),
+	assetId: text("asset_id").notNull().references(() => assetMetadata.assetId, { onDelete: "cascade" }),
+	timeStart: text("time_start"), // float string
+	timeEnd: text("time_end"),     // float string
+	description: text("description").notNull(),
+	tags: jsonb("tags"), // Array of string tags from CLIP
+	createdAt: timestamp("created_at").$defaultFn(() => new Date()).notNull(),
+});
+

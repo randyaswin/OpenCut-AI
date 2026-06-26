@@ -22,44 +22,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/generate", tags=["generation"])
 
 
+from app.services.image_backend import image_backend
+
 @router.post("/image")
 async def generate_image(params: ImageGenParams):
     """Generate an image from a text prompt.
 
-    Proxies to the image-service at IMAGE_SERVICE_URL.
+    Routes to either OpenAI or the local image-service depending on config.
+    Returns JSON with imageUrl, seed, and prompt matching ImageGenResult.
     """
     try:
-        async with httpx.AsyncClient(timeout=300) as client:
-            resp = await client.post(
-                f"{settings.IMAGE_SERVICE_URL}/generate",
-                json=params.model_dump(),
-            )
-            resp.raise_for_status()
-
-            content_type = resp.headers.get("content-type", "")
-            if "image" in content_type:
-                return Response(
-                    content=resp.content,
-                    media_type=content_type,
-                    headers={
-                        "Content-Disposition": f'attachment; filename="generated_{uuid.uuid4().hex[:8]}.png"'
-                    },
-                )
-            return resp.json()
-    except httpx.HTTPStatusError as e:
-        try:
-            detail = e.response.json().get("detail", e.response.text)
-        except Exception:
-            detail = e.response.text
-        raise HTTPException(status_code=e.response.status_code, detail=detail)
-    except httpx.ConnectError:
-        raise HTTPException(
-            status_code=503,
-            detail="Image service is not available. Ensure image-service is running on "
-            f"{settings.IMAGE_SERVICE_URL}",
-        )
+        result = await image_backend.generate(params)
+        return result
     except Exception:
-        logger.exception("Image generation proxy failed")
+        logger.exception("Image generation failed")
         raise HTTPException(status_code=500, detail="Image generation failed.")
 
 

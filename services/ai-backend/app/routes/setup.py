@@ -59,12 +59,17 @@ async def _check_ollama(url: str) -> dict:
 @router.get("/api/services/status")
 async def services_status():
     """Check the health of all microservices and return their status."""
-    results = await asyncio.gather(
+    tasks = [
         _check_service("whisper", settings.WHISPER_SERVICE_URL),
         _check_service("tts", settings.TTS_SERVICE_URL),
         _check_service("image", settings.IMAGE_SERVICE_URL),
         _check_service("turboquant", settings.TURBOQUANT_SERVICE_URL),
-        _check_ollama(settings.OLLAMA_URL),
+    ]
+    if settings.AI_LLM_BACKEND != "openai":
+        tasks.append(_check_ollama(settings.OLLAMA_URL))
+
+    results = await asyncio.gather(
+        *tasks,
         return_exceptions=True,
     )
 
@@ -74,6 +79,14 @@ async def services_status():
             services["unknown"] = {"status": "error", "details": str(r)}
         else:
             services[r["name"]] = r
+
+    if settings.AI_LLM_BACKEND == "openai":
+        services["ollama"] = {
+            "name": "ollama",
+            "url": settings.OLLAMA_URL,
+            "status": "disabled",
+            "details": "Ollama is disabled in OpenAI backend mode",
+        }
 
     return {
         "services": services,
@@ -249,7 +262,12 @@ _ALLOWED_CONFIG_KEYS = {
     "AI_LLM_BACKEND",
     "AI_COMPUTE_MODE",
     "OLLAMA_DEFAULT_MODEL",
+    "TTS_BACKEND",
+    "OPENAI_TTS_MODEL",
+    "OPENAI_TTS_VOICE",
+    "IMAGE_BACKEND",
 }
+
 
 
 class ConfigUpdateRequest(BaseModel):

@@ -27,6 +27,8 @@ export class PlaybackManager {
 			this.seek({ time: 0 });
 		}
 
+		this.shuttleSpeed = 1;
+		this.shuttleDirection = "forward";
 		this.isPlaying = true;
 		this.startTimer();
 		this.notify();

@@ -53,7 +53,21 @@ export class MediaManager {
 	}: {
 		projectId: string;
 		id: string;
-		updates: Partial<Pick<MediaAsset, "label" | "name">>;
+		updates: Partial<
+			Pick<
+				MediaAsset,
+				| "label"
+				| "name"
+				| "normalizedFile"
+				| "normalizedUrl"
+				| "thumbnailUrl"
+				| "codecCompatible"
+				| "width"
+				| "height"
+				| "duration"
+				| "fps"
+			>
+		>;
 	}): Promise<void> {
 		const index = this.assets.findIndex((a) => a.id === id);
 		if (index === -1) return;
@@ -88,6 +102,9 @@ export class MediaManager {
 			}
 			if (asset.proxyUrl) {
 				URL.revokeObjectURL(asset.proxyUrl);
+			}
+			if (asset.normalizedUrl) {
+				URL.revokeObjectURL(asset.normalizedUrl);
 			}
 		}
 
@@ -159,6 +176,9 @@ export class MediaManager {
 			if (asset.proxyUrl) {
 				URL.revokeObjectURL(asset.proxyUrl);
 			}
+			if (asset.normalizedUrl) {
+				URL.revokeObjectURL(asset.normalizedUrl);
+			}
 		});
 
 		for (const [id, controller] of this.proxyGenerators) {
@@ -201,6 +221,9 @@ export class MediaManager {
 			}
 			if (asset.proxyUrl) {
 				URL.revokeObjectURL(asset.proxyUrl);
+			}
+			if (asset.normalizedUrl) {
+				URL.revokeObjectURL(asset.normalizedUrl);
 			}
 		});
 
@@ -382,6 +405,36 @@ export class MediaManager {
 			controller.abort();
 			this.proxyGenerators.delete(assetId);
 			this.notify();
+		}
+	}
+
+	async fetchNormalizedAsset({
+		assetId,
+		normalizedUrl,
+	}: {
+		assetId: string;
+		normalizedUrl: string;
+	}): Promise<void> {
+		const asset = this.assets.find((a) => a.id === assetId);
+		if (!asset) return;
+
+		if (asset.normalizedFile) return;
+
+		try {
+			const res = await fetch(normalizedUrl);
+			if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+			const blob = await res.blob();
+			const normalizedFile = new File([blob], asset.name, { type: "video/mp4" });
+			const localUrl = URL.createObjectURL(normalizedFile);
+
+			this.assets = this.assets.map((a) =>
+				a.id === assetId
+					? { ...a, normalizedFile, normalizedUrl: localUrl }
+					: a,
+			);
+			this.notify();
+		} catch (error) {
+			console.error("Failed to fetch normalized asset:", error);
 		}
 	}
 

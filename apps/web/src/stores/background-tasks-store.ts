@@ -19,7 +19,10 @@ export interface BackgroundTask {
 		| "broll-suggestions"
 		| "broll-batch"
 		| "smart-cut"
+		| "youtube-download"
 		| "proxy-generation"
+		| "normalization"
+		| "ingest"
 		| "dubbing";
 	label: string;
 	status: BackgroundTaskStatus;

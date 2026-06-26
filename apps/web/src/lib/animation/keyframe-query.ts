@@ -14,7 +14,7 @@ export function getElementKeyframes({
 		return [];
 	}
 
-	return Object.entries(animations.channels).flatMap(
+	return Object.entries(animations.channels || {}).flatMap(
 		([propertyPath, channel]) => {
 			if (!channel || channel.keyframes.length === 0) {
 				return [];
@@ -38,7 +38,7 @@ export function hasKeyframesForPath({
 	animations: ElementAnimations | undefined;
 	propertyPath: AnimationPropertyPath;
 }): boolean {
-	const channel = animations?.channels[propertyPath];
+	const channel = animations?.channels?.[propertyPath];
 	return Boolean(channel && channel.keyframes.length > 0);
 }
 
@@ -51,7 +51,7 @@ export function getKeyframeAtTime({
 	propertyPath: AnimationPropertyPath;
 	time: number;
 }): ElementKeyframe | null {
-	const channel = animations?.channels[propertyPath];
+	const channel = animations?.channels?.[propertyPath];
 	if (!channel || channel.keyframes.length === 0) return null;
 	const keyframe = channel.keyframes.find(
 		(keyframe) => Math.abs(keyframe.time - time) <= TIME_EPSILON_SECONDS,

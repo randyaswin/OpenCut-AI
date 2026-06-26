@@ -34,6 +34,8 @@ export function CopilotPanel({ className }: { className?: string }) {
 		plan,
 		isPlanning,
 		isExecuting,
+		thinkingText,
+		agentIteration,
 		createPlan,
 		executePlan,
 		cancel,
@@ -99,13 +101,31 @@ export function CopilotPanel({ className }: { className?: string }) {
 					</div>
 
 					{!plan && (
-						<Button
-							className="w-full"
-							onClick={handleCreatePlan}
-							disabled={isPlanning || !goal.trim()}
-						>
-							{isPlanning ? "Creating Plan..." : "Create Plan"}
-						</Button>
+						<div className="space-y-3">
+							<Button
+								className="w-full"
+								onClick={handleCreatePlan}
+								disabled={isPlanning || !goal.trim()}
+							>
+								{isPlanning ? "Planning..." : "Create Plan"}
+							</Button>
+
+							{isPlanning && (
+								<div className="rounded border bg-black/40 p-3 space-y-2 font-mono text-[9px]">
+									<div className="flex items-center justify-between text-muted-foreground border-b border-white/5 pb-1">
+										<span>AGENT LOGS</span>
+										<span className="text-primary animate-pulse flex items-center gap-1">
+											🔄 turn {agentIteration}/8
+										</span>
+									</div>
+									<ScrollArea className="h-32 w-full text-white/90">
+										<pre className="whitespace-pre-wrap font-mono text-[8px] leading-relaxed">
+											{thinkingText || "Starting ReAct agent loop..."}
+										</pre>
+									</ScrollArea>
+								</div>
+							)}
+						</div>
 					)}
 
 					{plan && (

@@ -64,18 +64,29 @@ function buildTrackNodes({
 					continue;
 				}
 
+				const isCodecIncompatible = mediaAsset.codecCompatible === false;
+
+				if (mediaAsset.type === "video" && isCodecIncompatible && !mediaAsset.normalizedFile && !mediaAsset.proxyFile) {
+					// Incompatible codec and no proxy/normalized file ready yet. Skip rendering to avoid crash.
+					continue;
+				}
+
 				const shouldUseProxy =
-					useProxy &&
+					(useProxy || isCodecIncompatible) &&
 					isPreview &&
 					mediaAsset.proxyFile &&
 					mediaAsset.proxyUrl;
 
-				const effectiveFile = shouldUseProxy
-					? mediaAsset.proxyFile!
-					: mediaAsset.file;
-				const effectiveUrl = shouldUseProxy
-					? mediaAsset.proxyUrl!
-					: mediaAsset.url;
+				const effectiveFile = (isPreview && mediaAsset.normalizedFile)
+					? mediaAsset.normalizedFile
+					: shouldUseProxy
+						? mediaAsset.proxyFile!
+						: mediaAsset.file;
+				const effectiveUrl = (isPreview && mediaAsset.normalizedUrl)
+					? mediaAsset.normalizedUrl
+					: shouldUseProxy
+						? mediaAsset.proxyUrl!
+						: mediaAsset.url;
 
 				if (mediaAsset.type === "video") {
 					nodes.push(

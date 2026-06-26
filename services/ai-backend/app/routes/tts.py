@@ -12,6 +12,7 @@ from fastapi.responses import Response
 
 from app.config import settings
 from app.models.audio import TTSRequest
+from app.services.tts_backend import tts_backend
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,9 @@ async def _check_tts_ready() -> None:
 
     Raises HTTPException with an actionable message when it isn't.
     """
+    if tts_backend._should_use_openai():
+        return
+
     try:
         async with httpx.AsyncClient(timeout=HEALTH_TIMEOUT) as client:
             resp = await client.get(f"{settings.TTS_SERVICE_URL}/health")
@@ -62,26 +66,18 @@ async def _check_tts_ready() -> None:
 async def generate_speech(request: TTSRequest):
     """Generate speech audio from text.
 
-    Checks model readiness first, then proxies to the tts-service.
+    Checks model readiness first, then routes to tts_backend.
     """
     await _check_tts_ready()
 
     try:
-        async with httpx.AsyncClient(timeout=300) as client:
-            resp = await client.post(
-                f"{settings.TTS_SERVICE_URL}/generate",
-                json=request.model_dump(),
-            )
-            resp.raise_for_status()
-
-            content_type = resp.headers.get("content-type", "")
-            if "audio" in content_type:
-                return Response(
-                    content=resp.content,
-                    media_type=content_type,
-                    headers={"Content-Disposition": 'attachment; filename="tts_output.wav"'},
-                )
-            return resp.json()
+        audio_bytes, content_type = await tts_backend.generate(request)
+        ext = "mp3" if "mpeg" in content_type else "wav"
+        return Response(
+            content=audio_bytes,
+            media_type=content_type,
+            headers={"Content-Disposition": f'attachment; filename="tts_output.{ext}"'},
+        )
     except HTTPException:
         raise
     except httpx.HTTPStatusError as e:

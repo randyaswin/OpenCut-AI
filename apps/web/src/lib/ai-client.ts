@@ -480,6 +480,28 @@ class AIClient {
 		return this.request<AIBackendStatus>("/health", {}, HEALTH_TIMEOUT_MS);
 	}
 
+	async ingestAsset(
+		assetId: string,
+		file: File,
+		webhookUrl: string,
+	): Promise<{ job_id: string }> {
+		const formData = new FormData();
+		formData.append("asset_id", assetId);
+		formData.append("webhook_url", webhookUrl);
+		formData.append("file", file);
+
+		return this.requestFormData<{ job_id: string }>(
+			"/api/ingest",
+			formData,
+		);
+	}
+
+	async pollIngestStatus(jobId: string): Promise<any> {
+		return this.request<any>(`/api/ingest/${jobId}`, {
+			method: "GET",
+		});
+	}
+
 	async transcribe(
 		file: File,
 		language?: string,
@@ -663,10 +685,16 @@ class AIClient {
 		);
 	}
 
-	async chat(message: string, system?: string): Promise<{ response: string }> {
+	async chat(
+		message: string | Array<{ role: string; content: string }>,
+		system?: string,
+	): Promise<{ response: string }> {
+		const payload = typeof message === "string"
+			? { message, system }
+			: { messages: message, system };
 		return this.request<{ response: string }>("/api/llm/chat", {
 			method: "POST",
-			body: JSON.stringify({ message, system }),
+			body: JSON.stringify(payload),
 		}, LLM_TIMEOUT_MS);
 	}
 
@@ -677,7 +705,7 @@ class AIClient {
 	 * Returns the full accumulated response when done.
 	 */
 	async chatStream(
-		message: string,
+		message: string | Array<{ role: string; content: string }>,
 		onToken: (token: string, accumulated: string) => void,
 		system?: string,
 	): Promise<{ response: string }> {
@@ -685,12 +713,16 @@ class AIClient {
 		const controller = new AbortController();
 		const timeoutId = setTimeout(() => controller.abort(), 10_000);
 
+		const bodyPayload = typeof message === "string"
+			? { message, system }
+			: { messages: message, system };
+
 		let response: Response;
 		try {
 			response = await fetch(url, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ message, system }),
+				body: JSON.stringify(bodyPayload),
 				signal: controller.signal,
 			});
 			clearTimeout(timeoutId);
@@ -1222,12 +1254,13 @@ class AIClient {
 
 	async detectFaces(
 		file: File,
-		options?: { sampleInterval?: number; maxSamples?: number },
+		options?: { sampleInterval?: number; maxSamples?: number; subject?: string },
 	): Promise<FaceDetectionResult> {
 		const formData = new FormData();
 		formData.append("file", file);
 		if (options?.sampleInterval !== undefined) formData.append("sample_interval", options.sampleInterval.toString());
 		if (options?.maxSamples !== undefined) formData.append("max_samples", options.maxSamples.toString());
+		if (options?.subject !== undefined) formData.append("subject", options.subject);
 
 		return this.requestFormData<FaceDetectionResult>(
 			"/api/analyze/faces",
