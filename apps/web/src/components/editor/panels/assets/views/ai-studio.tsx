@@ -24,6 +24,10 @@ import { useTranscriptStore } from "@/stores/transcript-store";
 import { toast } from "sonner";
 import { useEditor } from "@/hooks/use-editor";
 import { COPILOT_SYSTEM_PROMPT, type CopilotPlan } from "@/lib/copilot/copilot-types";
+
+const WORKFLOW_SYSTEM_PROMPT = `You are a helpful video production assistant embedded in OpenCut AI. The user is following a step-by-step video creation workflow and needs conversational guidance, creative ideas, or help writing scripts and outlines — NOT editing actions.
+
+Respond in plain, friendly markdown. Be concise and actionable. Do NOT output JSON, tool calls, or copilot-plans. Just help the user with what they asked.`;
 import { runAgentLoop } from "@/lib/copilot/agent-loop";
 import { executeAction, previewAction } from "@/lib/ai-action-executor";
 import { TemplatePanel } from "@/components/editor/ai/template-panel";
@@ -756,6 +760,7 @@ export function AIStudioView() {
 			} else if (mode === "chat") {
 				systemPrompt = COPILOT_SYSTEM_PROMPT;
 
+				const MAX_TURNS = 50;
 				let lastTurn = 1;
 				let accumulatedContent = "";
 				setAgentStatus("Starting agent loop...");
@@ -767,7 +772,7 @@ export function AIStudioView() {
 					onToken: (token, turn) => {
 						lastTurn = turn;
 						accumulatedContent += token;
-						setAgentStatus(`Generating reasoning (turn ${turn}/8)...`);
+						setAgentStatus(`Generating reasoning (turn ${turn}/${MAX_TURNS})...`);
 						if (!messageAdded) {
 							addMessage({
 								id: assistantId,
@@ -781,9 +786,9 @@ export function AIStudioView() {
 					},
 					onToolCall: (toolName, params, turn) => {
 						lastTurn = turn;
-						const toolMessage = `\n\n> 🛠️ **Tool Call (Turn ${turn}/8):** Running \`${toolName}\`... \n\n`;
+						const toolMessage = `\n\n> 🛠️ **Tool Call (Turn ${turn}/${MAX_TURNS}):** Running \`${toolName}\`... \n\n`;
 						accumulatedContent += toolMessage;
-						setAgentStatus(`Running tool ${toolName} (turn ${turn}/8)...`);
+						setAgentStatus(`Running tool ${toolName} (turn ${turn}/${MAX_TURNS})...`);
 						if (!messageAdded) {
 							addMessage({
 								id: assistantId,
@@ -795,7 +800,7 @@ export function AIStudioView() {
 							updateMessage(assistantId, accumulatedContent);
 						}
 					},
-					maxIterations: 99,
+					maxIterations: MAX_TURNS,
 				});
 
 				const finalContent = loopResult.rawOutput || "No plan was generated.";
