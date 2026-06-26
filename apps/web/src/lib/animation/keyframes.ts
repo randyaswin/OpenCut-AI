@@ -66,7 +66,7 @@ export function getChannel({
 	animations: ElementAnimations | undefined;
 	propertyPath: string;
 }): AnimationChannel | undefined {
-	return animations?.channels[propertyPath];
+	return animations?.channels?.[propertyPath];
 }
 
 function getInterpolationForChannel({
@@ -333,7 +333,7 @@ export function cloneAnimations({
 		return undefined;
 	}
 
-	const clonedEntries = Object.entries(animations.channels).flatMap(
+	const clonedEntries = Object.entries(animations.channels || {}).flatMap(
 		([propertyPath, channel]) => {
 			if (!channel || channel.keyframes.length === 0) {
 				return [];
@@ -372,7 +372,7 @@ export function clampAnimationsToDuration({
 		return undefined;
 	}
 
-	const clampedEntries = Object.entries(animations.channels).flatMap(
+	const clampedEntries = Object.entries(animations.channels || {}).flatMap(
 		([propertyPath, channel]) => {
 			if (!channel) {
 				return [];
@@ -421,7 +421,7 @@ export function splitAnimationsAtTime({
 	const leftChannels: Array<[string, AnimationChannel]> = [];
 	const rightChannels: Array<[string, AnimationChannel]> = [];
 
-	for (const [propertyPath, channel] of Object.entries(animations.channels)) {
+	for (const [propertyPath, channel] of Object.entries(animations.channels || {})) {
 		if (!channel || channel.keyframes.length === 0) {
 			continue;
 		}

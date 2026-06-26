@@ -202,7 +202,7 @@ export async function executeAction(action: EditorAction): Promise<void> {
 				trimEnd: asset.duration || 5,
 				opacity: 100,
 				transform: { x: 0, y: 0, scale: 1, rotation: 0 },
-				animations: [],
+				animations: { channels: {} },
 				effects: [],
 			};
 			

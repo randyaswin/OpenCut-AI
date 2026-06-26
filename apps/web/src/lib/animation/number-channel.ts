@@ -11,7 +11,7 @@ export function getNumberChannelForPath({
 	animations: ElementAnimations | undefined;
 	propertyPath: AnimationPropertyPath;
 }): NumberAnimationChannel | undefined {
-	const channel = animations?.channels[propertyPath];
+	const channel = animations?.channels?.[propertyPath];
 	if (!channel || channel.valueKind !== "number") {
 		return undefined;
 	}

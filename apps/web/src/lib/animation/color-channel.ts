@@ -11,7 +11,7 @@ export function getColorChannelForPath({
 	animations: ElementAnimations | undefined;
 	propertyPath: AnimationPropertyPath;
 }): ColorAnimationChannel | undefined {
-	const channel = animations?.channels[propertyPath];
+	const channel = animations?.channels?.[propertyPath];
 	if (!channel || channel.valueKind !== "color") {
 		return undefined;
 	}
