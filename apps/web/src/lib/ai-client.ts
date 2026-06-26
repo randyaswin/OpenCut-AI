@@ -685,10 +685,16 @@ class AIClient {
 		);
 	}
 
-	async chat(message: string, system?: string): Promise<{ response: string }> {
+	async chat(
+		message: string | Array<{ role: string; content: string }>,
+		system?: string,
+	): Promise<{ response: string }> {
+		const payload = typeof message === "string"
+			? { message, system }
+			: { messages: message, system };
 		return this.request<{ response: string }>("/api/llm/chat", {
 			method: "POST",
-			body: JSON.stringify({ message, system }),
+			body: JSON.stringify(payload),
 		}, LLM_TIMEOUT_MS);
 	}
 
@@ -699,7 +705,7 @@ class AIClient {
 	 * Returns the full accumulated response when done.
 	 */
 	async chatStream(
-		message: string,
+		message: string | Array<{ role: string; content: string }>,
 		onToken: (token: string, accumulated: string) => void,
 		system?: string,
 	): Promise<{ response: string }> {
@@ -707,12 +713,16 @@ class AIClient {
 		const controller = new AbortController();
 		const timeoutId = setTimeout(() => controller.abort(), 10_000);
 
+		const bodyPayload = typeof message === "string"
+			? { message, system }
+			: { messages: message, system };
+
 		let response: Response;
 		try {
 			response = await fetch(url, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ message, system }),
+				body: JSON.stringify(bodyPayload),
 				signal: controller.signal,
 			});
 			clearTimeout(timeoutId);

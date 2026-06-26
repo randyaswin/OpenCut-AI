@@ -544,7 +544,56 @@ export async function executeAction(action: EditorAction): Promise<void> {
 		}
 
 		case "DENOISE_AUDIO": {
-			console.warn("[ai-action-executor] DENOISE_AUDIO is heavy. Implementing placeholder wrapper.");
+			try {
+				const strength = (action.params.strength as number) ?? 0.7;
+				const editor = getEditorCore();
+				const tracks = editor.timeline.getTracks();
+				let foundElement: any = null;
+				let foundFile: File | null = null;
+
+				for (const track of tracks) {
+					for (const element of track.elements) {
+						if (
+							(track.type === "video" || track.type === "audio") &&
+							element.mediaId
+						) {
+							const asset = editor.media.getAssets().find((a: any) => a.id === element.mediaId);
+							if (asset?.file) {
+								foundElement = element;
+								foundFile = asset.file;
+								break;
+							}
+						}
+					}
+					if (foundFile) break;
+				}
+
+				if (!foundFile || !foundElement) {
+					console.warn("[ai-action-executor] No audio or video file found to denoise.");
+					break;
+				}
+
+				const res = await aiClient.denoiseAudio(foundFile, strength);
+				const audioRes = await fetch(res.audioUrl);
+				const blob = await audioRes.blob();
+				const file = new File([blob], `denoised_${foundFile.name}`, { type: audioRes.headers.get("content-type") || "audio/wav" });
+				
+				const projectId = editor.project.getActive().id;
+				const mediaId = await editor.media.addMediaAsset({
+					projectId,
+					asset: {
+						type: "audio",
+						file,
+						url: URL.createObjectURL(file),
+						name: `Denoised ${foundFile.name}`,
+						duration: foundElement.duration,
+					} as any,
+				});
+
+				editor.timeline.updateElement(foundElement.id, { mediaId });
+			} catch (e) {
+				console.error("[ai-action-executor] Denoise failed:", e);
+			}
 			break;
 		}
 
