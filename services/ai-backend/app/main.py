@@ -122,15 +122,16 @@ async def health() -> dict:
 
     # Check Ollama models
     ollama_models: list[str] = []
-    try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            resp = await client.get(f"{settings.OLLAMA_URL}/api/tags")
-            if resp.status_code == 200:
-                online_services.append("ollama")
-                data = resp.json()
-                ollama_models = [m.get("name", "") for m in data.get("models", [])]
-    except Exception:
-        pass
+    if settings.AI_LLM_BACKEND != "openai":
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                resp = await client.get(f"{settings.OLLAMA_URL}/api/tags")
+                if resp.status_code == 200:
+                    online_services.append("ollama")
+                    data = resp.json()
+                    ollama_models = [m.get("name", "") for m in data.get("models", [])]
+        except Exception:
+            pass
 
     import asyncio
     await asyncio.gather(
@@ -232,6 +233,9 @@ async def services_health() -> dict:
             results[name] = {"status": "stopped", "detail": "Not reachable"}
 
     async def _check_ollama() -> None:
+        if settings.AI_LLM_BACKEND == "openai":
+            results["ollama"] = {"status": "disabled", "detail": "Disabled in OpenAI backend mode"}
+            return
         try:
             async with httpx.AsyncClient(timeout=5) as client:
                 resp = await client.get(settings.OLLAMA_URL)

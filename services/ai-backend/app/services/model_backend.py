@@ -356,7 +356,13 @@ class LLMBackend:
                 logger.debug("Routing generate to OpenAI")
                 return await self._openai_generate(prompt, system)
             except Exception as e:
+                if self.backend_mode == "openai":
+                    logger.error(f"OpenAI generate failed: {e}")
+                    raise
                 logger.warning(f"OpenAI generate failed: {e}, falling back to Ollama")
+
+        if self.backend_mode == "openai":
+            raise RuntimeError("OpenAI backend is configured but not available (missing API key or client error).")
 
         return await self._ollama_generate(prompt, model, system, format)
 
@@ -384,7 +390,13 @@ class LLMBackend:
                     yield token
                 return
             except Exception as e:
+                if self.backend_mode == "openai":
+                    logger.error(f"OpenAI stream failed: {e}")
+                    raise
                 logger.warning(f"OpenAI stream failed: {e}, falling back to Ollama")
+
+        if self.backend_mode == "openai":
+            raise RuntimeError("OpenAI backend is configured but not available (missing API key or client error).")
 
         async for token in self._ollama_generate_stream(prompt, model, system):
             yield token
@@ -416,7 +428,13 @@ class LLMBackend:
                 raw = await self._openai_generate(prompt, system)
                 return _parse_json_response(raw)
             except Exception as e:
+                if self.backend_mode == "openai":
+                    logger.error(f"OpenAI generate_json failed: {e}")
+                    raise
                 logger.warning(f"OpenAI generate_json failed: {e}, falling back to Ollama")
+
+        if self.backend_mode == "openai":
+            raise RuntimeError("OpenAI backend is configured but not available (missing API key or client error).")
 
         # Ollama path with format="json"
         last_error: Exception | None = None
@@ -429,6 +447,10 @@ class LLMBackend:
                 if attempt < _retries:
                     logger.warning("JSON parse failed (attempt %d), retrying: %s", attempt + 1, e)
                     continue
+                raise
+            except Exception as e:
+                if self.backend_mode == "openai":
+                    raise
                 raise
 
     async def chat(
@@ -451,7 +473,13 @@ class LLMBackend:
                 logger.debug("Routing chat to OpenAI")
                 return await self._openai_chat(messages, temperature)
             except Exception as e:
+                if self.backend_mode == "openai":
+                    logger.error(f"OpenAI chat failed: {e}")
+                    raise
                 logger.warning(f"OpenAI chat failed: {e}, falling back to Ollama")
+
+        if self.backend_mode == "openai":
+            raise RuntimeError("OpenAI backend is configured but not available (missing API key or client error).")
 
         return await self._ollama_chat(messages, model, temperature)
 
@@ -475,14 +503,15 @@ class LLMBackend:
 
         ollama_available = False
         ollama_models: list[dict] = []
-        try:
-            async with self._ollama_client() as client:
-                resp = await client.get("/api/tags")
-                if resp.status_code == 200:
-                    ollama_available = True
-                    ollama_models = resp.json().get("models", [])
-        except Exception:
-            pass
+        if self.backend_mode != "openai":
+            try:
+                async with self._ollama_client() as client:
+                    resp = await client.get("/api/tags")
+                    if resp.status_code == 200:
+                        ollama_available = True
+                        ollama_models = resp.json().get("models", [])
+            except Exception:
+                pass
 
         tq_model = None
         if tq_ready:
