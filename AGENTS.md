@@ -191,27 +191,17 @@ changes. Update it when you learn something that the next session needs.
   mechanism in `apps/web/migrations/` (Drizzle or whatever is already in
   use there — check before assuming) rather than ad-hoc SQL.
 
-## Open questions to confirm with the user before deep work
+## Implemented System Architectures (Phase 1 to 8 Summary)
 
-- Which OpenAI-compatible provider(s) specifically (OpenAI vs.
-  OpenRouter vs. self-hosted vLLM/LM Studio) — affects whether extra
-  headers / auth quirks matter.
-- Whether agent tool calls should use the model's native tool-calling
-  (function calling) if the configured OpenAI-compatible model supports
-  it, vs. continuing the existing JSON-in-prompt pattern used by Ollama
-  (which often lacks robust tool calling on small local models). Likely
-  needs a capability-detection branch.
-- Object detector choice for Phase 11/6 (YOLOv8/ONNX is the obvious
-  local default mentioned by the user; confirm licensing is acceptable —
-  AGPL on some YOLO distributions — and whether GPU is assumed
-  available, since this is a new always-on ingest step, not optional
-  like image generation).
-- Whether ingest-pipeline processing (Phase 6) should block "asset
-  ready to use" in the UI until done, or asset is usable immediately
-  with metadata arriving asynchronously (recommend async — don't block
-  the editor on a potentially slow pipeline).
-- Whether GoPro/iPhone normalization (Phase 5) should run automatically
-  on every upload, or only when source format is detected as
-  problematic (recommend: detect-and-conditionally-convert, not
-  blanket-transcode everything, to avoid wasting time/quality on files
-  that are already fine).
+- **OpenAI-Compatible Providers**: Integrations are standardized to allow OpenAI, OpenRouter, and local vLLM/LM Studio. Configuration fields exist in settings panel and are saved to browser local settings and forwarded as API headers.
+- **Agent Loop and Native Function Calling**: The Co-Pilot leverages a recursive ReAct agent loop in client-side TS with server-side JSON tool calls, falling back gracefully for models that don't support native tool definitions.
+- **GoPro/iPhone Normalization**: The backend checks for HEVC / MOV / GPMF files and transcodes them conditionally to H.264 mp4. This handles rotation and browser compatibility correctly.
+- **Ingest Pipeline**: Ingest triggers asynchronously when a file is imported. It runs scene detection, transcription, CLIP zero-shot tagging, and EXIF/metadata extraction without blocking the main editor UI.
+- **Durable Metadata Persistence**: Derived assets metadata, transcript segments, and tags are persisted in Postgres schema (`schema.ts`) and linked by `assetId` to OPFS files.
+- **Polished Chat UI/UX**:
+  - Collapsible tool logs rendering raw reasoning and JSON tool execution.
+  - Automatic scrolling behavior ensuring the current thinking tokens and plan steps are visible, while maintaining readable layout for previous response segments.
+  - Linear execution block displaying upcoming steps of editing plans, with explicit validation of destructive vs non-destructive action types.
+  - Quick action suggestion pills above the input textarea.
+  - Mic button supporting native `SpeechRecognition` web API with a fallback to WAV-recorded blobs sent to `/api/transcribe`.
+  - Auto-resizing textarea input.
