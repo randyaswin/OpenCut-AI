@@ -64,8 +64,15 @@ function buildTrackNodes({
 					continue;
 				}
 
+				const isCodecIncompatible = mediaAsset.codecCompatible === false;
+
+				if (mediaAsset.type === "video" && isCodecIncompatible && !mediaAsset.normalizedFile && !mediaAsset.proxyFile) {
+					// Incompatible codec and no proxy/normalized file ready yet. Skip rendering to avoid crash.
+					continue;
+				}
+
 				const shouldUseProxy =
-					useProxy &&
+					(useProxy || isCodecIncompatible) &&
 					isPreview &&
 					mediaAsset.proxyFile &&
 					mediaAsset.proxyUrl;
