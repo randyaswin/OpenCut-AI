@@ -19,7 +19,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { aiClient } from "@/lib/ai-client";
 import { useAIStatus } from "@/hooks/use-ai-status";
-import { useAIStore } from "@/stores/ai-store";
+import { useAIStore, type StudioMessage } from "@/stores/ai-store";
 import { useTranscriptStore } from "@/stores/transcript-store";
 import { toast } from "sonner";
 import { useEditor } from "@/hooks/use-editor";
@@ -532,13 +532,23 @@ export function AIStudioView() {
 	const savedIdeas = useAIStore((s) => s.savedIdeas);
 	const removeIdea = useAIStore((s) => s.removeIdea);
 	const clearIdeas = useAIStore((s) => s.clearIdeas);
-	const messages = useAIStore((s) => s.studioMessages);
-	const addMessage = useAIStore((s) => s.addStudioMessage);
-	const updateMessage = useAIStore((s) => s.updateStudioMessage);
-	const clearMessages = useAIStore((s) => s.clearStudioMessages);
+	const editor = useEditor();
+	const project = editor.project.getActiveOrNull();
+	const projectId = project?.metadata.id ?? "default";
+
+	const messages = useAIStore((s) => s.studioMessages[projectId] || []);
+	const addMessage = useCallback((message: StudioMessage) => {
+		useAIStore.getState().addStudioMessage(projectId, message);
+	}, [projectId]);
+	const updateMessage = useCallback((id: string, content: string) => {
+		useAIStore.getState().updateStudioMessage(projectId, id, content);
+	}, [projectId]);
+	const clearMessages = useCallback(() => {
+		useAIStore.getState().clearStudioMessages(projectId);
+	}, [projectId]);
+
 	const transcriptSegments = useTranscriptStore((s) => s.segments);
 	const hasTranscript = transcriptSegments.length > 0;
-	const editor = useEditor();
 
 	const [mode, setMode] = useState<StudioMode>("chat");
 	const [inputValue, setInputValue] = useState("");
@@ -825,10 +835,15 @@ export function AIStudioView() {
 		if (userIndex === -1) return;
 
 		const kept = messages.slice(0, userIndex + 1);
-		useAIStore.setState({ studioMessages: kept });
+		useAIStore.setState((state) => ({
+			studioMessages: {
+				...state.studioMessages,
+				[projectId]: kept,
+			},
+		}));
 
 		handleSend(lastUserMsg.content);
-	}, [messages, handleSend]);
+	}, [messages, handleSend, projectId]);
 
 
 	const handleKeyDown = useCallback(

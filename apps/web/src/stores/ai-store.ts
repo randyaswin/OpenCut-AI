@@ -26,7 +26,7 @@ interface AIState {
 	lastErrorType: AIErrorType | null;
 	consecutiveFailures: number;
 	savedIdeas: SavedIdea[];
-	studioMessages: StudioMessage[];
+	studioMessages: Record<string, StudioMessage[]>;
 
 	setBackendStatus: (status: AIBackendStatus | null) => void;
 	setConnectionError: (error: string, errorType: AIErrorType) => void;
@@ -42,9 +42,9 @@ interface AIState {
 	saveIdea: (content: string) => void;
 	removeIdea: (id: string) => void;
 	clearIdeas: () => void;
-	addStudioMessage: (message: StudioMessage) => void;
-	updateStudioMessage: (id: string, content: string) => void;
-	clearStudioMessages: () => void;
+	addStudioMessage: (projectId: string, message: StudioMessage) => void;
+	updateStudioMessage: (projectId: string, id: string, content: string) => void;
+	clearStudioMessages: (projectId: string) => void;
 }
 
 export const useAIStore = create<AIState>()(
@@ -61,7 +61,7 @@ export const useAIStore = create<AIState>()(
 			lastErrorType: null,
 			consecutiveFailures: 0,
 			savedIdeas: [],
-			studioMessages: [],
+			studioMessages: {},
 
 			setBackendStatus: (status) =>
 				set({
@@ -139,22 +139,47 @@ export const useAIStore = create<AIState>()(
 
 			clearIdeas: () => set({ savedIdeas: [] }),
 
-			addStudioMessage: (message) =>
+			addStudioMessage: (projectId, message) =>
 				set((state) => ({
-					studioMessages: [...state.studioMessages, message],
+					studioMessages: {
+						...state.studioMessages,
+						[projectId]: [...(state.studioMessages[projectId] || []), message],
+					},
 				})),
 
-			updateStudioMessage: (id, content) =>
+			updateStudioMessage: (projectId, id, content) =>
 				set((state) => ({
-					studioMessages: state.studioMessages.map((msg) =>
-						msg.id === id ? { ...msg, content } : msg,
-					),
+					studioMessages: {
+						...state.studioMessages,
+						[projectId]: (state.studioMessages[projectId] || []).map((msg) =>
+							msg.id === id ? { ...msg, content } : msg,
+						),
+					},
 				})),
 
-			clearStudioMessages: () => set({ studioMessages: [] }),
+			clearStudioMessages: (projectId) =>
+				set((state) => ({
+					studioMessages: {
+						...state.studioMessages,
+						[projectId]: [],
+					},
+				})),
 		}),
 		{
 			name: "opencut-ai-store",
+			version: 1,
+			migrate: (persistedState: any, version: number) => {
+				if (version === 0) {
+					if (persistedState && Array.isArray(persistedState.studioMessages)) {
+						persistedState.studioMessages = {
+							default: persistedState.studioMessages,
+						};
+					} else if (persistedState && !persistedState.studioMessages) {
+						persistedState.studioMessages = {};
+					}
+				}
+				return persistedState;
+			},
 			partialize: (state) => ({
 				savedIdeas: state.savedIdeas,
 				studioMessages: state.studioMessages,
