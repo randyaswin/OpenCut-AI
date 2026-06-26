@@ -233,9 +233,7 @@ export class ProjectManager {
 		
 		const pollInterval = setInterval(async () => {
 			try {
-				const status = await aiClient.pollIngestStatus(assetId);
-
-				// Fetch metadata to check if normalization completed early
+				// Fetch metadata to check database status
 				const metadataRes = await fetch(`/api/assets/${assetId}/metadata`);
 				if (metadataRes.ok) {
 					const data = await metadataRes.json();
@@ -297,59 +295,39 @@ export class ProjectManager {
 								}).catch(console.error);
 							}
 						}
-					}
-				}
 
-				if (status.status === "finished" || status.status === "failed") {
-					clearInterval(pollInterval);
-					this.activeIngestPolls.delete(assetId);
-					
-					if (status.status === "finished") {
-						useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
-							status: "completed",
-							progress: "Done",
-							completedAt: Date.now(),
-						});
+						if (data.status === "completed" || data.status === "error" || data.status === "failed") {
+							clearInterval(pollInterval);
+							this.activeIngestPolls.delete(assetId);
+							
+							if (data.status === "completed") {
+								useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+									status: "completed",
+									progress: "Done",
+									completedAt: Date.now(),
+								});
 
-						// Fetch complete ingested metadata and transcripts
-						const finalRes = await fetch(`/api/assets/${assetId}/metadata`);
-						if (finalRes.ok) {
-							const data = await finalRes.json();
-							if (data) {
-								const updates: any = {};
-								if (data.normalizedUrl) {
-									updates.normalizedUrl = data.normalizedUrl;
-								}
-								if (data.thumbnailUrl) {
-									updates.thumbnailUrl = data.thumbnailUrl;
-								}
+								// Final update
+								const finalUpdates: any = {};
+								if (data.normalizedUrl) finalUpdates.normalizedUrl = data.normalizedUrl;
+								if (data.thumbnailUrl) finalUpdates.thumbnailUrl = data.thumbnailUrl;
 								if (data.metadata) {
 									const format = data.metadata.format || {};
 									const videoStream = (data.metadata.streams || []).find((s: any) => s.codec_type === 'video');
-									
-									if (format.duration) {
-										updates.duration = parseFloat(format.duration);
-									}
+									if (format.duration) finalUpdates.duration = parseFloat(format.duration);
 									if (videoStream) {
-										if (videoStream.width) {
-											updates.width = parseInt(videoStream.width);
-										}
-										if (videoStream.height) {
-											updates.height = parseInt(videoStream.height);
-										}
+										if (videoStream.width) finalUpdates.width = parseInt(videoStream.width);
+										if (videoStream.height) finalUpdates.height = parseInt(videoStream.height);
 										if (videoStream.r_frame_rate) {
 											const [num, den] = videoStream.r_frame_rate.split('/').map(Number);
-											if (den) {
-												updates.fps = Math.round(num / den);
-											}
+											if (den) finalUpdates.fps = Math.round(num / den);
 										}
 									}
 								}
-
 								this.editor.media.updateMediaAsset({
 									projectId,
 									id: assetId,
-									updates,
+									updates: finalUpdates,
 								});
 
 								if (data.transcripts && data.transcripts.length > 0) {
@@ -358,21 +336,37 @@ export class ProjectManager {
 										useTranscriptStore.getState().setSegments(transcriptData.segments as any);
 									}
 								}
+							} else {
+								useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+									status: "error",
+									error: "Ingest failed",
+									completedAt: Date.now(),
+								});
 							}
+							return;
 						}
-					} else {
-						useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
-							status: "error",
-							error: "Ingest failed",
-							completedAt: Date.now(),
-						});
+
+						if (data.status === "processing") {
+							try {
+								const analyzeStatus = await aiClient.pollIngestStatus(`analyze-${assetId}`);
+								useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+									progress: analyzeStatus.progress ? `AI: ${analyzeStatus.progress}` : "Analyzing (AI)...",
+								});
+							} catch {
+								useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+									progress: "Analyzing (AI)...",
+								});
+							}
+							return;
+						}
 					}
-				} else {
-					// Update progress
-					useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
-						progress: status.progress || "Processing...",
-					});
 				}
+
+				// Fallback to checking the normalization job status
+				const status = await aiClient.pollIngestStatus(assetId);
+				useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+					progress: status.progress || "Processing...",
+				});
 			} catch (err: any) {
 				console.error("Error polling ingest status on reload:", err);
 			}
