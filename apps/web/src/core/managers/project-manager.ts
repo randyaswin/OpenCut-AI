@@ -100,6 +100,7 @@ export class ProjectManager {
 				fps: DEFAULT_FPS,
 				canvasSize: DEFAULT_CANVAS_SIZE,
 				originalCanvasSize: null,
+				proxyEditing: true,
 				background: {
 					type: "color",
 					color: DEFAULT_COLOR,

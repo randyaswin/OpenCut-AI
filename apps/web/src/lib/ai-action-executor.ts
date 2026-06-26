@@ -216,12 +216,26 @@ export async function executeAction(action: EditorAction): Promise<void> {
 		case "SET_CANVAS_SIZE": {
 			try {
 				const editor = getEditorCore();
+				let width = action.params.width as number;
+				let height = action.params.height as number;
+				const label = (action.params.label as string || "").toLowerCase();
+				
+				if (!width || !height) {
+					if (label.includes("9:16") || label.includes("portrait") || label.includes("vertical") || label.includes("tiktok") || label.includes("reel") || label.includes("shorts")) {
+						width = 1080;
+						height = 1920;
+					} else if (label.includes("1:1") || label.includes("square")) {
+						width = 1080;
+						height = 1080;
+					} else {
+						width = 1920;
+						height = 1080;
+					}
+				}
+
 				editor.project.updateSettings({
 					settings: {
-						canvasSize: {
-							width: (action.params.width as number) ?? 1920,
-							height: (action.params.height as number) ?? 1080,
-						},
+						canvasSize: { width, height },
 					},
 					pushHistory: false,
 				});
