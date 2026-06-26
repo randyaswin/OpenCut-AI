@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
@@ -71,6 +72,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Inject Cross-Origin-Resource-Policy for COEP compliance on static files
+@app.middleware("http")
+async def add_corp_header(request, call_next):
+    response: Response = await call_next(request)
+    if request.url.path.startswith("/generated"):
+        response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+    return response
 
 # Static files for generated content
 app.mount("/generated", StaticFiles(directory=settings.GENERATED_DIR), name="generated")

@@ -225,6 +225,113 @@ async function executeTool(tool: string, params: any, editor: any): Promise<stri
 	return `Unknown tool: ${tool}`;
 }
 
+/**
+ * Normalise any vendor-specific tool-call syntax the LLM might emit into the
+ * internal ```json tool-call … ``` format the loop already parses.
+ *
+ * Handles:
+ *   • <minimax:tool_call><invoke name="TOOL">…</invoke></minimax:tool_call>
+ *   • <invoke name="TOOL"><parameter name="key">val</parameter></invoke>
+ *   • <tool_call>{"name":"TOOL","arguments":{…}}</tool_call>
+ *   • {"name":"TOOL","arguments":{…}} bare JSON objects (no fences)
+ *   • {"function":{"name":"TOOL","arguments":{…}}} OpenAI delta objects
+ *   • Plain text XML: <TOOL_NAME><key>val</key></TOOL_NAME>
+ */
+function normalizeToolCallFormats(text: string): string {
+	// ── 1. minimax:tool_call / generic XML wrapper ──────────────────────────
+	// <minimax:tool_call><invoke name="LIST_MEDIA"></invoke></minimax:tool_call>
+	// <tool_call>JSON</tool_call>
+	const xmlWrapperRe = /<(?:minimax:)?tool_call[^>]*>([\s\S]*?)<\/(?:minimax:)?tool_call>/i;
+	const xmlWrapperMatch = text.match(xmlWrapperRe);
+	if (xmlWrapperMatch) {
+		const inner = xmlWrapperMatch[1].trim();
+		// Inner might be <invoke name="…">…</invoke> or raw JSON
+		const invokeRe = /<invoke[^>]*\sname="([^"]+)"[^>]*>([\s\S]*?)<\/invoke>/i;
+		const invokeMatch = inner.match(invokeRe);
+		if (invokeMatch) {
+			const toolName = invokeMatch[1];
+			const paramsXml = invokeMatch[2].trim();
+			const params = parseXmlParams(paramsXml);
+			const before = text.slice(0, text.indexOf(xmlWrapperMatch[0])).trimEnd();
+			const after = text.slice(text.indexOf(xmlWrapperMatch[0]) + xmlWrapperMatch[0].length).trimStart();
+			const fence = "```json tool-call\n" + JSON.stringify({ tool: toolName, params }) + "\n```";
+			return [before, fence, after].filter(Boolean).join("\n");
+		}
+		// inner is raw JSON: {"name":"TOOL","arguments":{}}
+		try {
+			const parsed = JSON.parse(inner);
+			const toolName = parsed.name || parsed.tool;
+			const params = parsed.arguments || parsed.params || {};
+			if (toolName) {
+				const before = text.slice(0, text.indexOf(xmlWrapperMatch[0])).trimEnd();
+				const after = text.slice(text.indexOf(xmlWrapperMatch[0]) + xmlWrapperMatch[0].length).trimStart();
+				const fence = "```json tool-call\n" + JSON.stringify({ tool: toolName, params }) + "\n```";
+				return [before, fence, after].filter(Boolean).join("\n");
+			}
+		} catch { /* fall through */ }
+	}
+
+	// ── 2. bare <invoke name="…"> without outer wrapper ─────────────────────
+	const bareInvokeRe = /<invoke[^>]*\sname="([^"]+)"[^>]*>([\s\S]*?)<\/invoke>/i;
+	const bareInvokeMatch = text.match(bareInvokeRe);
+	if (bareInvokeMatch) {
+		const toolName = bareInvokeMatch[1];
+		const paramsXml = bareInvokeMatch[2].trim();
+		const params = parseXmlParams(paramsXml);
+		const before = text.slice(0, text.indexOf(bareInvokeMatch[0])).trimEnd();
+		const after = text.slice(text.indexOf(bareInvokeMatch[0]) + bareInvokeMatch[0].length).trimStart();
+		const fence = "```json tool-call\n" + JSON.stringify({ tool: toolName, params }) + "\n```";
+		return [before, fence, after].filter(Boolean).join("\n");
+	}
+
+	// ── 3. OpenAI function-call delta: {"function":{"name":"X","arguments":"{}"}} ─
+	// Only when the ENTIRE response (trimmed) is such an object
+	const trimmed = text.trim();
+	if (trimmed.startsWith("{") && trimmed.endsWith("}") && !text.includes("```")) {
+		try {
+			const parsed = JSON.parse(trimmed);
+			// OpenAI delta shape
+			if (parsed.function?.name) {
+				const args = typeof parsed.function.arguments === "string"
+					? JSON.parse(parsed.function.arguments || "{}")
+					: (parsed.function.arguments || {});
+				return "```json tool-call\n" + JSON.stringify({ tool: parsed.function.name, params: args }) + "\n```";
+			}
+			// Anthropic tool_use shape: { type:"tool_use", name:"X", input:{} }
+			if (parsed.type === "tool_use" && parsed.name) {
+				return "```json tool-call\n" + JSON.stringify({ tool: parsed.name, params: parsed.input || {} }) + "\n```";
+			}
+			// Plain {"name":"X","arguments":{}}
+			if ((parsed.name || parsed.tool) && !parsed.steps) {
+				const toolName = parsed.name || parsed.tool;
+				const params = parsed.arguments || parsed.params || parsed.input || {};
+				return "```json tool-call\n" + JSON.stringify({ tool: toolName, params }) + "\n```";
+			}
+		} catch { /* fall through */ }
+	}
+
+	// ── 4. Nothing matched — return unchanged ─────────────────────────────────
+	return text;
+}
+
+/** Parse simple <key>value</key> parameter blocks into a plain object. */
+function parseXmlParams(xml: string): Record<string, unknown> {
+	const params: Record<string, unknown> = {};
+	const paramRe = /<parameter\s+name="([^"]+)">([^<]*)<\/parameter>|<([a-zA-Z_][a-zA-Z0-9_]*)>([^<]*)<\/\3>/g;
+	let m: RegExpExecArray | null;
+	while ((m = paramRe.exec(xml)) !== null) {
+		const key = m[1] || m[3];
+		const rawVal = m[2] ?? m[4] ?? "";
+		const val = rawVal.trim();
+		// coerce numerics / booleans
+		if (val === "true") params[key] = true;
+		else if (val === "false") params[key] = false;
+		else if (val !== "" && !isNaN(Number(val))) params[key] = Number(val);
+		else params[key] = val;
+	}
+	return params;
+}
+
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
 	const {
 		goal,
@@ -266,7 +373,10 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 			systemPrompt,
 		);
 
-		const responseText = result.response || accumulated;
+		const rawResponse = result.response || accumulated;
+		// Normalise any vendor-specific tool-call XML/JSON into our internal
+		// ` ```json tool-call ``` ` format before further processing.
+		const responseText = normalizeToolCallFormats(rawResponse);
 		lastOutput = responseText;
 
 		// Check for tool calls

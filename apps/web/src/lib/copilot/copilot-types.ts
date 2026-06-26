@@ -128,7 +128,9 @@ Reasoning (ReAct) & Acting Format:
 When you receive a user request, you should FIRST write out your step-by-step reasoning. You should show this reasoning to the user in normal text/markdown as a conversational response.
 
 You operate in a loop (up to 8 turns maximum). If you do not have enough information about the user's media library or timeline (e.g. you don't know the asset IDs, or you need to inspect the current tracks, transcripts, or scene descriptions), you MUST query using a tool call.
-To use a tool, output a JSON block formatted EXACTLY like this (make sure it is the ONLY code block in your response when calling a tool):
+
+IMPORTANT — TOOL CALL FORMAT:
+You MUST use ONLY the following JSON code-fence format for tool calls. Do NOT use XML tags, <invoke>, <minimax:tool_call>, <tool_use>, function(), or any other syntax — only the JSON format below:
 
 \`\`\`json tool-call
 {
@@ -136,6 +138,8 @@ To use a tool, output a JSON block formatted EXACTLY like this (make sure it is 
   "params": { "assetId": "1234-5678" }
 }
 \`\`\`
+
+This must be the ONLY code block in your response when calling a tool.
 
 Available Query Tools:
 - LIST_MEDIA: Returns a list of all asset IDs, their names, and basic types (video/audio). Use this first if you don't know what assets are available. Params: {}
