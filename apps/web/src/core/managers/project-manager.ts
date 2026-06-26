@@ -32,6 +32,7 @@ import { loadFonts } from "@/lib/fonts/google-fonts";
 import { collectFontFamilies } from "@/lib/timeline/element-utils";
 import { useTranscriptStore } from "@/stores/transcript-store";
 import { useBackgroundTasksStore } from "@/stores/background-tasks-store";
+import { aiClient } from "@/lib/ai-client";
 
 export interface MigrationState {
 	isMigrating: boolean;
@@ -60,6 +61,7 @@ export class ProjectManager {
 		result: null,
 	};
 	private exportCancelRequested = false;
+	private activeIngestPolls = new Map<string, NodeJS.Timeout>();
 
 	constructor(private editor: EditorCore) {}
 
@@ -127,6 +129,12 @@ export class ProjectManager {
 	}
 
 	async loadProject({ id }: { id: string }): Promise<void> {
+		// Clear existing polls
+		for (const [_, interval] of this.activeIngestPolls.entries()) {
+			clearInterval(interval);
+		}
+		this.activeIngestPolls.clear();
+
 		if (!this.isInitialized) {
 			this.isLoading = true;
 			this.notify();
@@ -181,6 +189,7 @@ export class ProjectManager {
 									label: `AI Ingest: ${asset.name}`,
 									progress: "Processing...",
 								});
+								this.startIngestPolling(id, asset.id, asset.name);
 							}
 
 							if (data.normalizedUrl) {
@@ -213,6 +222,163 @@ export class ProjectManager {
 			this.notify();
 			this.editor.save.resume();
 		}
+	}
+
+	private startIngestPolling(projectId: string, assetId: string, assetName: string) {
+		if (this.activeIngestPolls.has(assetId)) {
+			return; // Already polling
+		}
+
+		const ingestTaskId = `ingest-${assetId}`;
+		
+		const pollInterval = setInterval(async () => {
+			try {
+				const status = await aiClient.pollIngestStatus(assetId);
+
+				// Fetch metadata to check if normalization completed early
+				const metadataRes = await fetch(`/api/assets/${assetId}/metadata`);
+				if (metadataRes.ok) {
+					const data = await metadataRes.json();
+					if (data) {
+						const currentAssets = this.editor.media.getAssets();
+						const currentAsset = currentAssets.find((a) => a.id === assetId);
+						
+						if (currentAsset) {
+							const updates: any = {};
+							let shouldUpdate = false;
+
+							if (data.normalizedUrl && data.normalizedUrl !== currentAsset.normalizedUrl) {
+								updates.normalizedUrl = data.normalizedUrl;
+								shouldUpdate = true;
+							}
+							if (data.thumbnailUrl && data.thumbnailUrl !== currentAsset.thumbnailUrl) {
+								updates.thumbnailUrl = data.thumbnailUrl;
+								shouldUpdate = true;
+							}
+							if (data.metadata) {
+								const format = data.metadata.format || {};
+								const videoStream = (data.metadata.streams || []).find((s: any) => s.codec_type === 'video');
+								
+								if (format.duration && currentAsset.duration === undefined) {
+									updates.duration = parseFloat(format.duration);
+									shouldUpdate = true;
+								}
+								if (videoStream) {
+									if (videoStream.width && currentAsset.width === undefined) {
+										updates.width = parseInt(videoStream.width);
+										shouldUpdate = true;
+									}
+									if (videoStream.height && currentAsset.height === undefined) {
+										updates.height = parseInt(videoStream.height);
+										shouldUpdate = true;
+									}
+									if (videoStream.r_frame_rate && currentAsset.fps === undefined) {
+										const [num, den] = videoStream.r_frame_rate.split('/').map(Number);
+										if (den) {
+											updates.fps = Math.round(num / den);
+											shouldUpdate = true;
+										}
+									}
+								}
+							}
+
+							if (shouldUpdate) {
+								this.editor.media.updateMediaAsset({
+									projectId,
+									id: assetId,
+									updates,
+								});
+							}
+
+							if (data.normalizedUrl) {
+								this.editor.media.fetchNormalizedAsset({
+									assetId,
+									normalizedUrl: data.normalizedUrl,
+								}).catch(console.error);
+							}
+						}
+					}
+				}
+
+				if (status.status === "finished" || status.status === "failed") {
+					clearInterval(pollInterval);
+					this.activeIngestPolls.delete(assetId);
+					
+					if (status.status === "finished") {
+						useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+							status: "completed",
+							progress: "Done",
+							completedAt: Date.now(),
+						});
+
+						// Fetch complete ingested metadata and transcripts
+						const finalRes = await fetch(`/api/assets/${assetId}/metadata`);
+						if (finalRes.ok) {
+							const data = await finalRes.json();
+							if (data) {
+								const updates: any = {};
+								if (data.normalizedUrl) {
+									updates.normalizedUrl = data.normalizedUrl;
+								}
+								if (data.thumbnailUrl) {
+									updates.thumbnailUrl = data.thumbnailUrl;
+								}
+								if (data.metadata) {
+									const format = data.metadata.format || {};
+									const videoStream = (data.metadata.streams || []).find((s: any) => s.codec_type === 'video');
+									
+									if (format.duration) {
+										updates.duration = parseFloat(format.duration);
+									}
+									if (videoStream) {
+										if (videoStream.width) {
+											updates.width = parseInt(videoStream.width);
+										}
+										if (videoStream.height) {
+											updates.height = parseInt(videoStream.height);
+										}
+										if (videoStream.r_frame_rate) {
+											const [num, den] = videoStream.r_frame_rate.split('/').map(Number);
+											if (den) {
+												updates.fps = Math.round(num / den);
+											}
+										}
+									}
+								}
+
+								this.editor.media.updateMediaAsset({
+									projectId,
+									id: assetId,
+									updates,
+								});
+
+								if (data.transcripts && data.transcripts.length > 0) {
+									const transcriptData = data.transcripts[0];
+									if (transcriptData && transcriptData.segments) {
+										useTranscriptStore.getState().setSegments(transcriptData.segments as any);
+									}
+								}
+							}
+						}
+					} else {
+						useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+							status: "error",
+							error: "Ingest failed",
+							completedAt: Date.now(),
+						});
+					}
+				} else {
+					// Update progress
+					useBackgroundTasksStore.getState().updateTask(ingestTaskId, {
+						progress: status.progress || "Processing...",
+					});
+				}
+			} catch (err: any) {
+				console.error("Error polling ingest status on reload:", err);
+			}
+		}, 3000);
+
+		this.activeIngestPolls.set(assetId, pollInterval);
 	}
 
 	async saveCurrentProject(): Promise<void> {

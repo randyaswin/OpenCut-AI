@@ -58,9 +58,21 @@ async def ingest_asset(
 
     # Enqueue job
     try:
+        # Check if job already exists to avoid duplicate enqueuing
+        existing_job = q.fetch_job(asset_id)
+        if existing_job:
+            status = existing_job.get_status()
+            if status in ["queued", "started", "deferred"]:
+                return {"job_id": existing_job.id}
+            try:
+                existing_job.delete()
+            except Exception:
+                pass
+
         job = q.enqueue(
             run_ingest_pipeline,
             args=(asset_id, file_path, webhook_url),
+            job_id=asset_id,
             job_timeout=3600 # 1 hour max
         )
         return {"job_id": job.id}
