@@ -80,7 +80,7 @@ export function useCopilot() {
 							progress: `Turn ${turn}: Tool Call ${toolName}...`,
 						});
 					},
-					maxIterations: 15,
+					maxIterations: 50,
 				});
 
 				if (!loopResult.plan) {
