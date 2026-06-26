@@ -307,12 +307,16 @@ class StorageService {
 
 		if (!file || !metadata) return null;
 
+		const actualType = (file.type && file.type !== "application/octet-stream") 
+			? file.type 
+			: getMimeType(metadata.name);
+
 		// OPFS loses the original filename and MIME type — reconstruct from metadata
 		const restoredFile =
-			file.name === metadata.name && file.type
+			file.name === metadata.name && file.type === actualType
 				? file
 				: new File([file], metadata.name, {
-						type: file.type || getMimeType(metadata.name),
+						type: actualType || (metadata.type === "video" ? "video/mp4" : "application/octet-stream"),
 						lastModified: file.lastModified,
 					});
 
