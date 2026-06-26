@@ -206,6 +206,7 @@ class LLMBackend:
         prompt: str,
         model: str | None = None,
         system: str | None = None,
+        format: str | None = None,
     ) -> str:
         """Generate via TurboQuant's OpenAI-compatible chat completions."""
         messages: list[dict[str, str]] = []
@@ -213,15 +214,19 @@ class LLMBackend:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": 2048,
+            "temperature": 0.7,
+        }
+        if format == "json":
+            payload["response_format"] = {"type": "json_object"}
+
         async with httpx.AsyncClient(timeout=httpx.Timeout(300, connect=10.0)) as client:
             resp = await client.post(
                 f"{self.turboquant_url}/v1/chat/completions",
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "max_tokens": 2048,
-                    "temperature": 0.7,
-                },
+                json=payload,
             )
             resp.raise_for_status()
             try:
@@ -307,6 +312,7 @@ class LLMBackend:
         self,
         prompt: str,
         system: str | None = None,
+        format: str | None = None,
     ) -> str:
         messages: list[dict[str, str]] = []
         if system:
@@ -314,7 +320,12 @@ class LLMBackend:
         messages.append({"role": "user", "content": prompt})
 
         client = self._get_openai_client()
-        resp = await client.chat_completion(messages=messages, temperature=0.7)
+        response_format = {"type": "json_object"} if format == "json" else None
+        resp = await client.chat_completion(
+            messages=messages, 
+            temperature=0.7, 
+            response_format=response_format
+        )
         choices = resp.get("choices", [])
         if choices:
             return choices[0].get("message", {}).get("content", "")
@@ -432,7 +443,7 @@ class LLMBackend:
         if await self._should_use_turboquant():
             try:
                 logger.debug("Routing generate_json to TurboQuant")
-                raw = await self._tq_generate(prompt, model, system)
+                raw = await self._tq_generate(prompt, model, system, format="json")
                 return _parse_json_response(raw)
             except Exception:
                 logger.warning("TurboQuant generate_json failed, falling back to next available backend")
@@ -441,7 +452,7 @@ class LLMBackend:
         if self._should_use_openai():
             try:
                 logger.debug("Routing generate_json to OpenAI")
-                raw = await self._openai_generate(prompt, system)
+                raw = await self._openai_generate(prompt, system, format="json")
                 return _parse_json_response(raw)
             except Exception as e:
                 if self.backend_mode == "openai":
