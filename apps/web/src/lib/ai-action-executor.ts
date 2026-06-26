@@ -204,9 +204,10 @@ export async function executeAction(action: EditorAction): Promise<void> {
 				transform: { scale: 1, position: { x: 0, y: 0 }, rotate: 0 },
 				animations: { channels: {} },
 				effects: [],
+				...(asset.type === "audio" ? { sourceType: "upload" as const, volume: 100 } : {})
 			};
 			
-			editor.timeline.insertElement({ element, placement: { trackId, time: startTime } });
+			editor.timeline.insertElement({ element, placement: { mode: "explicit" as const, trackId } });
 			break;
 		}
 

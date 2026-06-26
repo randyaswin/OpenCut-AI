@@ -795,7 +795,7 @@ export function AIStudioView() {
 							updateMessage(assistantId, accumulatedContent);
 						}
 					},
-					maxIterations: 8,
+					maxIterations: 99,
 				});
 
 				const finalContent = loopResult.rawOutput || "No plan was generated.";
