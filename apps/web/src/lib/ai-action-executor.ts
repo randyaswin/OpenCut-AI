@@ -11,16 +11,41 @@ function getEditorCore() {
 	return EditorCore.getInstance();
 }
 
-export function isDestructiveAction(type: EditorActionType): boolean {
-	const destructiveTypes: EditorActionType[] = [
+export function isDestructiveAction(actionType: EditorActionType): boolean {
+	return [
 		"REMOVE_SEGMENTS",
-		"REMOVE_FILLERS",
+		"DELETE_CLIPS",
+		"REMOVE_TRACK",
 		"REMOVE_SILENCE",
+		"REMOVE_FILLERS",
 		"TRIM_CLIP",
 		"SPLIT_CLIP",
-		"EXPORT_PROJECT"
-	];
-	return destructiveTypes.includes(type);
+		"EXPORT_PROJECT",
+	].includes(actionType);
+}
+
+function isElementTargeted(el: any, action: any, store: any): boolean {
+	const clipIds = action.params.clipIds as string[] | undefined;
+	const segmentIds = action.params.segmentIds as number[] | undefined;
+	
+	if (clipIds && clipIds.length > 0) {
+		if (clipIds.includes(el.id)) return true;
+	}
+	
+	if (segmentIds && segmentIds.length > 0) {
+		const targetSegments = store.segments.filter((s: any) => segmentIds.includes(s.id));
+		const elEnd = el.startTime + el.duration;
+		for (const seg of targetSegments) {
+			if (seg.start < elEnd && seg.end > el.startTime) {
+				return true;
+			}
+		}
+		return false;
+	}
+	
+	if (!clipIds?.length && !segmentIds?.length) return true;
+	
+	return false;
 }
 
 export function previewAction(action: EditorAction): string {
@@ -216,14 +241,27 @@ export async function executeAction(action: EditorAction): Promise<void> {
 		case "SET_CANVAS_SIZE": {
 			try {
 				const editor = getEditorCore();
+				let width = action.params.width as number;
+				let height = action.params.height as number;
+				const label = (action.params.label as string || "").toLowerCase();
+				
+				if (!width || !height) {
+					if (label.includes("9:16") || label.includes("portrait") || label.includes("vertical") || label.includes("tiktok") || label.includes("reel") || label.includes("shorts")) {
+						width = 1080;
+						height = 1920;
+					} else if (label.includes("1:1") || label.includes("square")) {
+						width = 1080;
+						height = 1080;
+					} else {
+						width = 1920;
+						height = 1080;
+					}
+				}
+
 				editor.project.updateSettings({
 					settings: {
-						canvasSize: {
-							width: (action.params.width as number) ?? 1920,
-							height: (action.params.height as number) ?? 1080,
-						},
-					},
-					pushHistory: false,
+						canvasSize: { width, height },
+					}
 				});
 			} catch {}
 			break;
@@ -388,14 +426,79 @@ export async function executeAction(action: EditorAction): Promise<void> {
 				const editor = getEditorCore();
 				const tracks = editor.timeline.getTracks();
 				const effectType = (action.params.effectType as string) ?? "filter";
+				const effectParams = action.params.effectParams as Record<string, any>;
 				for (const track of tracks) {
 					for (const el of track.elements) {
-						if (el.type === "video" || el.type === "image") {
-							editor.timeline.addClipEffect({
+						if ((el.type === "video" || el.type === "image") && isElementTargeted(el, action, store)) {
+							const effectId = editor.timeline.addClipEffect({
 								trackId: track.id,
 								elementId: el.id,
 								effectType: effectType,
 							});
+							if (effectId && effectParams) {
+								editor.timeline.updateEffectParams({
+									trackId: track.id,
+									elementId: el.id,
+									effectId: effectId,
+									params: effectParams
+								});
+							}
+						}
+					}
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "ADJUST_VISUALS": {
+			try {
+				const editor = getEditorCore();
+				const tracks = editor.timeline.getTracks();
+				const params = action.params as Record<string, any>;
+				for (const track of tracks) {
+					for (const el of track.elements) {
+						if ((el.type === "video" || el.type === "image") && isElementTargeted(el, action, store)) {
+							const colorAdjustParams: Record<string, number> = {};
+							if (typeof params.brightness === "number") colorAdjustParams.brightness = params.brightness;
+							if (typeof params.contrast === "number") colorAdjustParams.contrast = params.contrast;
+							if (typeof params.saturation === "number") colorAdjustParams.saturation = params.saturation;
+							if (typeof params.temperature === "number") colorAdjustParams.temperature = params.temperature;
+							if (typeof params.exposure === "number") colorAdjustParams.exposure = params.exposure;
+							if (typeof params.hue === "number") colorAdjustParams.hue = params.hue;
+							
+							if (Object.keys(colorAdjustParams).length > 0) {
+								const effectId = editor.timeline.addClipEffect({
+									trackId: track.id,
+									elementId: el.id,
+									effectType: "color_adjust",
+								});
+								if (effectId) {
+									editor.timeline.updateEffectParams({
+										trackId: track.id,
+										elementId: el.id,
+										effectId: effectId,
+										params: colorAdjustParams
+									});
+								}
+							}
+							
+							if (typeof params.vignette === "number") {
+								const effectId = editor.timeline.addClipEffect({
+									trackId: track.id,
+									elementId: el.id,
+									effectType: "vignette",
+								});
+								if (effectId) {
+									editor.timeline.updateEffectParams({
+										trackId: track.id,
+										elementId: el.id,
+										effectId: effectId,
+										params: { amount: params.vignette }
+									});
+								}
+							}
 						}
 					}
 				}
@@ -514,18 +617,22 @@ export async function executeAction(action: EditorAction): Promise<void> {
 			try {
 				const editor = getEditorCore();
 				const tracks = editor.timeline.getTracks();
+				const transitionType = (action.params.transitionType as string) || "crossfade";
+				const duration = (action.params.duration as number) || 1.0;
 				for (const track of tracks) {
 					for (let i = 0; i < track.elements.length - 1; i++) {
 						const el = track.elements[i];
 						const next = track.elements[i + 1];
-						if (Math.abs(el.startTime + el.duration - next.startTime) < 0.1) {
-							editor.timeline.updateElements({
-								updates: [{
-									trackId: track.id,
-									elementId: el.id,
-									updates: { transitionOut: { type: action.params.transitionType as string ?? "crossfade", duration: 1.0 } }
-								}]
-							});
+						if (isElementTargeted(el, action, store) || isElementTargeted(next, action, store)) {
+							if (Math.abs(el.startTime + el.duration - next.startTime) < 0.1) {
+								editor.timeline.updateElements({
+									updates: [{
+										trackId: track.id,
+										elementId: el.id,
+										updates: { transitionOut: { type: transitionType, duration } }
+									}]
+								});
+							}
 						}
 					}
 				}
@@ -741,9 +848,9 @@ export async function executeAction(action: EditorAction): Promise<void> {
 								
 								const animations = { ...(el.animations || {}) };
 								const channels = { ...(animations.channels || {}) };
-								channels.positionX = keyframes.positionX;
-								channels.positionY = keyframes.positionY;
-								channels.scale = keyframes.scale;
+								channels["transform.position.x"] = keyframes.positionX;
+								channels["transform.position.y"] = keyframes.positionY;
+								channels["transform.scale"] = keyframes.scale;
 								animations.channels = channels;
 								
 								editor.timeline.updateElement(el.id, { animations });
@@ -753,6 +860,231 @@ export async function executeAction(action: EditorAction): Promise<void> {
 				}
 			} catch (e) {
 				console.error("[ai-action-executor] AUTO_REFRAME failed:", e);
+			}
+			break;
+		}
+
+		case "ADD_TRACK": {
+			try {
+				const editor = getEditorCore();
+				const type = (action.params.type as any) || "video";
+				editor.timeline.addTrack({ type });
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "REMOVE_TRACK": {
+			try {
+				const editor = getEditorCore();
+				const trackId = action.params.trackId as string;
+				if (trackId) editor.timeline.removeTrack({ trackId });
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "SET_TRACK_STATE": {
+			try {
+				const editor = getEditorCore();
+				const trackId = action.params.trackId as string;
+				if (trackId) {
+					if (typeof action.params.muted === "boolean") {
+						editor.timeline.toggleTrackMute({ trackId });
+					}
+					if (typeof action.params.hidden === "boolean") {
+						editor.timeline.toggleTrackVisibility({ trackId });
+					}
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "DELETE_CLIPS": {
+			try {
+				const editor = getEditorCore();
+				const clipIds = action.params.clipIds as string[];
+				if (clipIds && clipIds.length > 0) {
+					editor.timeline.deleteElements({ elementIds: clipIds });
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "DUPLICATE_CLIPS": {
+			try {
+				const editor = getEditorCore();
+				const clipIds = action.params.clipIds as string[];
+				if (clipIds && clipIds.length > 0) {
+					editor.timeline.duplicateElements({ elementIds: clipIds });
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "MOVE_CLIP": {
+			try {
+				const editor = getEditorCore();
+				const clipId = action.params.clipId as string;
+				const newTrackId = action.params.trackId as string | undefined;
+				const newStartTime = action.params.startTime as number | undefined;
+				if (clipId) {
+					const tracks = editor.timeline.getTracks();
+					let foundTrackId = newTrackId;
+					if (!foundTrackId) {
+						for (const t of tracks) {
+							if (t.elements.some((e: any) => e.id === clipId)) {
+								foundTrackId = t.id;
+								break;
+							}
+						}
+					}
+					if (foundTrackId && newStartTime !== undefined) {
+						editor.timeline.moveElement({ elementId: clipId, newTrackId: foundTrackId, newStartTime });
+					}
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "UPDATE_TRANSFORM":
+		case "UPDATE_VOLUME":
+		case "UPDATE_TEXT": {
+			try {
+				const editor = getEditorCore();
+				const clipIds = action.params.clipIds as string[];
+				if (clipIds && clipIds.length > 0) {
+					const tracks = editor.timeline.getTracks();
+					for (const track of tracks) {
+						for (const el of track.elements) {
+							if (clipIds.includes(el.id)) {
+								const updates: any = {};
+								if (action.type === "UPDATE_TRANSFORM") {
+									const transform: any = { ...((el as any).transform || {}) };
+									if (typeof action.params.scale === "number") transform.scale = action.params.scale;
+									if (typeof action.params.x === "number") transform.x = action.params.x;
+									if (typeof action.params.y === "number") transform.y = action.params.y;
+									if (typeof action.params.rotation === "number") transform.rotation = action.params.rotation;
+									updates.transform = transform;
+									if (typeof action.params.opacity === "number") updates.opacity = action.params.opacity;
+								} else if (action.type === "UPDATE_VOLUME") {
+									if (typeof action.params.volume === "number") updates.volume = action.params.volume;
+									if (typeof action.params.muted === "boolean") updates.muted = action.params.muted;
+								} else if (action.type === "UPDATE_TEXT") {
+									if (typeof action.params.text === "string") updates.content = action.params.text;
+									if (typeof action.params.fontSize === "number") updates.fontSize = action.params.fontSize;
+									if (typeof action.params.fontFamily === "string") updates.fontFamily = action.params.fontFamily;
+									if (typeof action.params.color === "string") updates.color = action.params.color;
+									if (typeof action.params.textAlign === "string") updates.textAlign = action.params.textAlign;
+								}
+								
+								if (Object.keys(updates).length > 0) {
+									editor.timeline.updateElements({
+										updates: [{
+											trackId: track.id,
+											elementId: el.id,
+											updates
+										}]
+									});
+								}
+							}
+						}
+					}
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "ADD_STICKER_OVERLAY": {
+			try {
+				const editor = getEditorCore();
+				const stickerId = action.params.stickerId as string;
+				const startTime = (action.params.startTime as number) || 0;
+				const duration = (action.params.duration as number) || 3;
+				if (stickerId) {
+					const trackId = editor.timeline.addTrack({ type: "sticker" });
+					editor.timeline.insertElement({
+						element: {
+							type: "sticker",
+							name: "Sticker",
+							stickerId,
+							startTime,
+							duration,
+							trimStart: 0,
+							trimEnd: 0,
+							transform: {
+								scale: (action.params.scale as number) || 1,
+								position: {
+									x: (action.params.x as number) || 0,
+									y: (action.params.y as number) || 0
+								},
+								rotate: 0
+							},
+							opacity: 1
+						} as any,
+						placement: { mode: "explicit", trackId }
+					});
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "UPDATE_PROJECT_SETTINGS": {
+			try {
+				const editor = getEditorCore();
+				const settings: any = {};
+				if (typeof action.params.width === "number") settings.canvasSize = { width: action.params.width, height: action.params.height || action.params.width };
+				if (typeof action.params.fps === "number") settings.fps = action.params.fps;
+				if (typeof action.params.backgroundColor === "string") settings.backgroundColor = action.params.backgroundColor;
+				if (typeof action.params.proxyEditing === "boolean") settings.proxyEditing = action.params.proxyEditing;
+				if (Object.keys(settings).length > 0) {
+					editor.project.updateSettings({ settings });
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "ADD_KEYFRAME": {
+			try {
+				const editor = getEditorCore();
+				const clipId = action.params.clipId as string;
+				const property = action.params.property as any;
+				const time = action.params.time as number;
+				const value = action.params.value as any;
+				if (clipId && property && time !== undefined && value !== undefined) {
+					const tracks = editor.timeline.getTracks();
+					for (const track of tracks) {
+						for (const el of track.elements) {
+							if (el.id === clipId) {
+								editor.timeline.upsertKeyframe({
+									trackId: track.id,
+									elementId: clipId,
+									property,
+									time,
+									value
+								});
+							}
+						}
+					}
+				}
+			} catch (e) {
+				console.error(e);
 			}
 			break;
 		}

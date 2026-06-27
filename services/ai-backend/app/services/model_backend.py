@@ -142,7 +142,11 @@ class LLMBackend:
         async with self._ollama_client() as client:
             resp = await client.post("/api/generate", json=payload)
             resp.raise_for_status()
-            return resp.json().get("response", "")
+            try:
+                return resp.json().get("response", "")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse Ollama response as JSON. Raw: {resp.text[:500]}")
+                raise ValueError("Invalid JSON response from Ollama API") from e
 
     async def _ollama_generate_stream(
         self,
@@ -189,7 +193,11 @@ class LLMBackend:
         async with self._ollama_client() as client:
             resp = await client.post("/api/chat", json=payload)
             resp.raise_for_status()
-            return resp.json().get("message", {}).get("content", "")
+            try:
+                return resp.json().get("message", {}).get("content", "")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse Ollama chat response as JSON. Raw: {resp.text[:500]}")
+                raise ValueError("Invalid JSON response from Ollama API") from e
 
     # ── TurboQuant methods ────────────────────────────────────────────
 
@@ -198,6 +206,7 @@ class LLMBackend:
         prompt: str,
         model: str | None = None,
         system: str | None = None,
+        format: str | None = None,
     ) -> str:
         """Generate via TurboQuant's OpenAI-compatible chat completions."""
         messages: list[dict[str, str]] = []
@@ -205,18 +214,26 @@ class LLMBackend:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": 2048,
+            "temperature": 0.7,
+        }
+        if format == "json":
+            payload["response_format"] = {"type": "json_object"}
+
         async with httpx.AsyncClient(timeout=httpx.Timeout(300, connect=10.0)) as client:
             resp = await client.post(
                 f"{self.turboquant_url}/v1/chat/completions",
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "max_tokens": 2048,
-                    "temperature": 0.7,
-                },
+                json=payload,
             )
             resp.raise_for_status()
-            data = resp.json()
+            try:
+                data = resp.json()
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse TurboQuant response as JSON. Raw: {resp.text[:500]}")
+                raise ValueError("Invalid JSON response from TurboQuant API") from e
             choices = data.get("choices", [])
             if choices:
                 return choices[0].get("message", {}).get("content", "")
@@ -239,7 +256,11 @@ class LLMBackend:
                 },
             )
             resp.raise_for_status()
-            data = resp.json()
+            try:
+                data = resp.json()
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse TurboQuant chat response as JSON. Raw: {resp.text[:500]}")
+                raise ValueError("Invalid JSON response from TurboQuant API") from e
             choices = data.get("choices", [])
             if choices:
                 return choices[0].get("message", {}).get("content", "")
@@ -291,6 +312,7 @@ class LLMBackend:
         self,
         prompt: str,
         system: str | None = None,
+        format: str | None = None,
     ) -> str:
         messages: list[dict[str, str]] = []
         if system:
@@ -298,7 +320,12 @@ class LLMBackend:
         messages.append({"role": "user", "content": prompt})
 
         client = self._get_openai_client()
-        resp = await client.chat_completion(messages=messages, temperature=0.7)
+        response_format = {"type": "json_object"} if format == "json" else None
+        resp = await client.chat_completion(
+            messages=messages, 
+            temperature=0.7, 
+            response_format=response_format
+        )
         choices = resp.get("choices", [])
         if choices:
             return choices[0].get("message", {}).get("content", "")
@@ -416,7 +443,7 @@ class LLMBackend:
         if await self._should_use_turboquant():
             try:
                 logger.debug("Routing generate_json to TurboQuant")
-                raw = await self._tq_generate(prompt, model, system)
+                raw = await self._tq_generate(prompt, model, system, format="json")
                 return _parse_json_response(raw)
             except Exception:
                 logger.warning("TurboQuant generate_json failed, falling back to next available backend")
@@ -425,7 +452,7 @@ class LLMBackend:
         if self._should_use_openai():
             try:
                 logger.debug("Routing generate_json to OpenAI")
-                raw = await self._openai_generate(prompt, system)
+                raw = await self._openai_generate(prompt, system, format="json")
                 return _parse_json_response(raw)
             except Exception as e:
                 if self.backend_mode == "openai":

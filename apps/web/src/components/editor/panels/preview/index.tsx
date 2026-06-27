@@ -74,7 +74,7 @@ function RenderTreeController() {
 			canvasSize: { width, height },
 			background: activeProject.settings.background,
 			isPreview: true,
-			useProxy: activeProject.settings.proxyEditing ?? false,
+			useProxy: activeProject.settings.proxyEditing ?? true,
 		});
 
 		editor.renderer.setRenderTree({ renderTree });

@@ -3,7 +3,9 @@ import { useTranscriptStore } from "@/stores/transcript-store";
 import type { CopilotPlan, CopilotStep, CopilotStepStatus } from "./copilot-types";
 import { isDestructiveAction } from "@/lib/ai-action-executor";
 import { getAllEmbeddings } from "@/services/search/embedding-store";
-
+import { getAllTransitions } from "@/lib/transitions/registry";
+import { getAllEffects } from "@/lib/effects/registry";
+import { searchStickers } from "@/lib/stickers/index";
 export interface AgentLoopOptions {
 	goal: string;
 	systemPrompt: string;
@@ -28,6 +30,95 @@ function dotProduct(a: Float32Array, b: Float32Array): number {
 }
 
 async function executeTool(tool: string, params: any, editor: any): Promise<string> {
+	if (tool === "GET_SYSTEM_CAPABILITIES") {
+		const transitions = getAllTransitions().map(t => ({
+			type: t.type,
+			name: t.name,
+			defaultDuration: t.defaultDuration
+		}));
+		const effects = getAllEffects().map(e => ({
+			type: e.type,
+			name: e.name,
+			params: e.params?.map(p => {
+				const base = { key: p.key, label: p.label, type: p.type, defaultValue: p.default };
+				if (p.type === "number") return { ...base, min: p.min, max: p.max, step: p.step };
+				if (p.type === "select") return { ...base, options: p.options };
+				return base;
+			}) || []
+		}));
+		
+		const capabilities = {
+			transitions,
+			effects,
+			supportedLanguages: ["en", "es", "fr", "de", "it", "ja", "ko", "zh"],
+			colorAdjustRanges: {
+				brightness: { min: -1, max: 1 },
+				contrast: { min: 0, max: 2 },
+				saturation: { min: 0, max: 2 },
+				temperature: { min: -1, max: 1 },
+				exposure: { min: -1, max: 1 },
+				hue: { min: -180, max: 180 }
+			}
+		};
+		return JSON.stringify(capabilities, null, 2);
+	}
+
+	if (tool === "GET_PROJECT_SETTINGS") {
+		const project = editor.project.getActiveOrNull();
+		if (!project) return "No active project found.";
+		return JSON.stringify(project.settings, null, 2);
+	}
+
+	if (tool === "GET_CLIP_DETAILS") {
+		const clipId = params?.clipId;
+		if (!clipId) return "Error: clipId is missing.";
+		const tracks = editor.timeline.getTracks();
+		for (const track of tracks) {
+			for (const el of track.elements) {
+				if (el.id === clipId) {
+					// We return a detailed object
+					const details = {
+						id: el.id,
+						type: el.type,
+						name: el.name,
+						startTime: el.startTime,
+						duration: el.duration,
+						transform: (el as any).transform,
+						opacity: (el as any).opacity,
+						volume: (el as any).volume,
+						effects: (el as any).effects,
+						textProps: el.type === "text" ? {
+							text: (el as any).text,
+							fontSize: (el as any).fontSize,
+							fontFamily: (el as any).fontFamily,
+							color: (el as any).color,
+							textAlign: (el as any).textAlign
+						} : undefined
+					};
+					return JSON.stringify(details, null, 2);
+				}
+			}
+		}
+		return "Clip not found.";
+	}
+
+	if (tool === "SEARCH_STICKERS") {
+		const query = params?.query;
+		if (!query) return "Error: query is missing.";
+		try {
+			const res = await searchStickers({ query, category: "all", limit: 10 });
+			const results = res.items.map(s => ({
+				id: s.id,
+				provider: s.provider,
+				name: s.name,
+				previewUrl: s.previewUrl
+			}));
+			return JSON.stringify(results, null, 2);
+		} catch (e: any) {
+			return `Error searching stickers: ${e.message || e}`;
+		}
+	}
+
 	if (tool === "LIST_MEDIA") {
 		const assets = editor.media.getAssets().map((a: any) => ({
 			id: a.id,
