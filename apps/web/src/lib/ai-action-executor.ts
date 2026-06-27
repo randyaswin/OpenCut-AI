@@ -261,8 +261,7 @@ export async function executeAction(action: EditorAction): Promise<void> {
 				editor.project.updateSettings({
 					settings: {
 						canvasSize: { width, height },
-					},
-					pushHistory: false,
+					}
 				});
 			} catch {}
 			break;
@@ -849,9 +848,9 @@ export async function executeAction(action: EditorAction): Promise<void> {
 								
 								const animations = { ...(el.animations || {}) };
 								const channels = { ...(animations.channels || {}) };
-								channels.positionX = keyframes.positionX;
-								channels.positionY = keyframes.positionY;
-								channels.scale = keyframes.scale;
+								channels["transform.position.x"] = keyframes.positionX;
+								channels["transform.position.y"] = keyframes.positionY;
+								channels["transform.scale"] = keyframes.scale;
 								animations.channels = channels;
 								
 								editor.timeline.updateElement(el.id, { animations });

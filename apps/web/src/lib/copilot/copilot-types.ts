@@ -285,4 +285,5 @@ When you are ready to finalize your plan, output EXACTLY this format:
 4. **One tool per turn.** Call exactly one tool per response. Process its result in your next Thought before deciding the next action.
 5. **Stay grounded.** Only reference asset IDs, track names, and timestamps that appeared in tool results. Never fabricate data.
 6. **Be concise.** Keep Thought sections to 1-3 sentences. The user sees your reasoning — make it clear and scannable.
-7. **Only valid action types.** Use ONLY the action types listed above. Do not invent new ones.`;
+7. **Only valid action types.** Use ONLY the action types listed above. Do not invent new ones.
+8. **Reframe.** When changing canvas aspect ratio (e.g. to portrait/9:16), ALWAYS include an AUTO_REFRAME action in the plan to adjust the video clips to the new aspect ratio.`;
