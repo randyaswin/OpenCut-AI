@@ -1025,14 +1025,16 @@ export async function executeAction(action: EditorAction): Promise<void> {
 							trimStart: 0,
 							trimEnd: 0,
 							transform: {
-								x: (action.params.x as number) || 0,
-								y: (action.params.y as number) || 0,
 								scale: (action.params.scale as number) || 1,
-								rotation: 0
+								position: {
+									x: (action.params.x as number) || 0,
+									y: (action.params.y as number) || 0
+								},
+								rotate: 0
 							},
 							opacity: 1
-						},
-						placement: { trackId, startTime }
+						} as any,
+						placement: { mode: "explicit", trackId }
 					});
 				}
 			} catch (e) {
