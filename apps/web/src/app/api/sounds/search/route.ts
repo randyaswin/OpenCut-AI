@@ -88,6 +88,43 @@ function applyEffectsFilters({
 	}
 }
 
+function applySongsFilters({
+	params,
+	min_rating,
+	commercial_only,
+	hasQuery,
+}: {
+	params: URLSearchParams;
+	min_rating: number;
+	commercial_only: boolean;
+	hasQuery: boolean;
+}) {
+	// Songs should typically have some duration, we'll ensure they are at least 15 seconds
+	params.append("filter", "duration:[15.0 TO *]");
+	params.append("filter", `avg_rating:[${min_rating} TO *]`);
+
+	// Enforce copyright-free (Creative Commons 0 or Attribution only) for safe commercial/public use
+	if (commercial_only) {
+		params.append(
+			"filter",
+			'license:("Creative Commons 0" OR "Attribution")',
+		);
+	}
+
+	if (!hasQuery) {
+		params.append(
+			"filter",
+			"tag:music OR tag:song OR tag:loop OR tag:instrumental OR tag:beat",
+		);
+	} else {
+		// Even with a query, bias heavily toward music tags
+		params.append(
+			"filter",
+			"tag:music OR tag:song OR tag:loop OR tag:instrumental",
+		);
+	}
+}
+
 function transformFreesoundResult(
 	result: z.infer<typeof freesoundResultSchema>,
 ) {
@@ -155,16 +192,7 @@ export async function GET(request: NextRequest) {
 			commercial_only,
 		} = validationResult.data;
 
-		if (type === "songs") {
-			return NextResponse.json(
-				{
-					error: "Songs are not available yet",
-					message:
-						"Song search functionality is coming soon. Try searching for sound effects instead.",
-				},
-				{ status: 501 },
-			);
-		}
+		const isSongsSearch = type === "songs";
 
 		const baseUrl = "https://freesound.org/apiv2/search/text/";
 
@@ -198,6 +226,8 @@ export async function GET(request: NextRequest) {
 		const isEffectsSearch = type === "effects" || !type;
 		if (isEffectsSearch) {
 			applyEffectsFilters({ params, min_rating, commercial_only, hasQuery: !!query?.trim() });
+		} else if (isSongsSearch) {
+			applySongsFilters({ params, min_rating, commercial_only, hasQuery: !!query?.trim() });
 		}
 
 		const response = await fetch(`${baseUrl}?${params.toString()}`);
