@@ -14,6 +14,8 @@ function getEditorCore() {
 export function isDestructiveAction(actionType: EditorActionType): boolean {
 	return [
 		"REMOVE_SEGMENTS",
+		"DELETE_CLIPS",
+		"REMOVE_TRACK",
 		"REMOVE_SILENCE",
 		"REMOVE_FILLERS",
 		"TRIM_CLIP",
@@ -859,6 +861,229 @@ export async function executeAction(action: EditorAction): Promise<void> {
 				}
 			} catch (e) {
 				console.error("[ai-action-executor] AUTO_REFRAME failed:", e);
+			}
+			break;
+		}
+
+		case "ADD_TRACK": {
+			try {
+				const editor = getEditorCore();
+				const type = (action.params.type as any) || "video";
+				editor.timeline.addTrack({ type });
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "REMOVE_TRACK": {
+			try {
+				const editor = getEditorCore();
+				const trackId = action.params.trackId as string;
+				if (trackId) editor.timeline.removeTrack({ trackId });
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "SET_TRACK_STATE": {
+			try {
+				const editor = getEditorCore();
+				const trackId = action.params.trackId as string;
+				if (trackId) {
+					if (typeof action.params.muted === "boolean") {
+						editor.timeline.toggleTrackMute({ trackId });
+					}
+					if (typeof action.params.hidden === "boolean") {
+						editor.timeline.toggleTrackVisibility({ trackId });
+					}
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "DELETE_CLIPS": {
+			try {
+				const editor = getEditorCore();
+				const clipIds = action.params.clipIds as string[];
+				if (clipIds && clipIds.length > 0) {
+					editor.timeline.deleteElements({ elementIds: clipIds });
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "DUPLICATE_CLIPS": {
+			try {
+				const editor = getEditorCore();
+				const clipIds = action.params.clipIds as string[];
+				if (clipIds && clipIds.length > 0) {
+					editor.timeline.duplicateElements({ elementIds: clipIds });
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "MOVE_CLIP": {
+			try {
+				const editor = getEditorCore();
+				const clipId = action.params.clipId as string;
+				const newTrackId = action.params.trackId as string | undefined;
+				const newStartTime = action.params.startTime as number | undefined;
+				if (clipId) {
+					const tracks = editor.timeline.getTracks();
+					let foundTrackId = newTrackId;
+					if (!foundTrackId) {
+						for (const t of tracks) {
+							if (t.elements.some((e: any) => e.id === clipId)) {
+								foundTrackId = t.id;
+								break;
+							}
+						}
+					}
+					if (foundTrackId && newStartTime !== undefined) {
+						editor.timeline.moveElement({ elementId: clipId, newTrackId: foundTrackId, newStartTime });
+					}
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "UPDATE_TRANSFORM":
+		case "UPDATE_VOLUME":
+		case "UPDATE_TEXT": {
+			try {
+				const editor = getEditorCore();
+				const clipIds = action.params.clipIds as string[];
+				if (clipIds && clipIds.length > 0) {
+					const tracks = editor.timeline.getTracks();
+					for (const track of tracks) {
+						for (const el of track.elements) {
+							if (clipIds.includes(el.id)) {
+								const updates: any = {};
+								if (action.type === "UPDATE_TRANSFORM") {
+									const transform: any = { ...((el as any).transform || {}) };
+									if (typeof action.params.scale === "number") transform.scale = action.params.scale;
+									if (typeof action.params.x === "number") transform.x = action.params.x;
+									if (typeof action.params.y === "number") transform.y = action.params.y;
+									if (typeof action.params.rotation === "number") transform.rotation = action.params.rotation;
+									updates.transform = transform;
+									if (typeof action.params.opacity === "number") updates.opacity = action.params.opacity;
+								} else if (action.type === "UPDATE_VOLUME") {
+									if (typeof action.params.volume === "number") updates.volume = action.params.volume;
+									if (typeof action.params.muted === "boolean") updates.muted = action.params.muted;
+								} else if (action.type === "UPDATE_TEXT") {
+									if (typeof action.params.text === "string") updates.content = action.params.text;
+									if (typeof action.params.fontSize === "number") updates.fontSize = action.params.fontSize;
+									if (typeof action.params.fontFamily === "string") updates.fontFamily = action.params.fontFamily;
+									if (typeof action.params.color === "string") updates.color = action.params.color;
+									if (typeof action.params.textAlign === "string") updates.textAlign = action.params.textAlign;
+								}
+								
+								if (Object.keys(updates).length > 0) {
+									editor.timeline.updateElements({
+										updates: [{
+											trackId: track.id,
+											elementId: el.id,
+											updates
+										}]
+									});
+								}
+							}
+						}
+					}
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "ADD_STICKER_OVERLAY": {
+			try {
+				const editor = getEditorCore();
+				const stickerId = action.params.stickerId as string;
+				const startTime = (action.params.startTime as number) || 0;
+				const duration = (action.params.duration as number) || 3;
+				if (stickerId) {
+					const trackId = editor.timeline.addTrack({ type: "sticker" });
+					editor.timeline.insertElement({
+						element: {
+							type: "sticker",
+							name: "Sticker",
+							stickerId,
+							startTime,
+							duration,
+							trimStart: 0,
+							trimEnd: 0,
+							transform: {
+								x: (action.params.x as number) || 0,
+								y: (action.params.y as number) || 0,
+								scale: (action.params.scale as number) || 1,
+								rotation: 0
+							},
+							opacity: 1
+						},
+						placement: { trackId, startTime }
+					});
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "UPDATE_PROJECT_SETTINGS": {
+			try {
+				const editor = getEditorCore();
+				const settings: any = {};
+				if (typeof action.params.width === "number") settings.canvasSize = { width: action.params.width, height: action.params.height || action.params.width };
+				if (typeof action.params.fps === "number") settings.fps = action.params.fps;
+				if (typeof action.params.backgroundColor === "string") settings.backgroundColor = action.params.backgroundColor;
+				if (typeof action.params.proxyEditing === "boolean") settings.proxyEditing = action.params.proxyEditing;
+				if (Object.keys(settings).length > 0) {
+					editor.project.updateSettings({ settings });
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "ADD_KEYFRAME": {
+			try {
+				const editor = getEditorCore();
+				const clipId = action.params.clipId as string;
+				const property = action.params.property as any;
+				const time = action.params.time as number;
+				const value = action.params.value as any;
+				if (clipId && property && time !== undefined && value !== undefined) {
+					const tracks = editor.timeline.getTracks();
+					for (const track of tracks) {
+						for (const el of track.elements) {
+							if (el.id === clipId) {
+								editor.timeline.upsertKeyframe({
+									trackId: track.id,
+									elementId: clipId,
+									property,
+									time,
+									value
+								});
+							}
+						}
+					}
+				}
+			} catch (e) {
+				console.error(e);
 			}
 			break;
 		}

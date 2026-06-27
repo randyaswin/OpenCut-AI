@@ -5,6 +5,7 @@ import { isDestructiveAction } from "@/lib/ai-action-executor";
 import { getAllEmbeddings } from "@/services/search/embedding-store";
 import { getAllTransitions } from "@/lib/transitions/registry";
 import { getAllEffects } from "@/lib/effects/registry";
+import { searchStickers } from "@/lib/stickers/index";
 export interface AgentLoopOptions {
 	goal: string;
 	systemPrompt: string;
@@ -60,6 +61,62 @@ async function executeTool(tool: string, params: any, editor: any): Promise<stri
 			}
 		};
 		return JSON.stringify(capabilities, null, 2);
+	}
+
+	if (tool === "GET_PROJECT_SETTINGS") {
+		const project = editor.project.getActiveOrNull();
+		if (!project) return "No active project found.";
+		return JSON.stringify(project.settings, null, 2);
+	}
+
+	if (tool === "GET_CLIP_DETAILS") {
+		const clipId = params?.clipId;
+		if (!clipId) return "Error: clipId is missing.";
+		const tracks = editor.timeline.getTracks();
+		for (const track of tracks) {
+			for (const el of track.elements) {
+				if (el.id === clipId) {
+					// We return a detailed object
+					const details = {
+						id: el.id,
+						type: el.type,
+						name: el.name,
+						startTime: el.startTime,
+						duration: el.duration,
+						transform: (el as any).transform,
+						opacity: (el as any).opacity,
+						volume: (el as any).volume,
+						effects: (el as any).effects,
+						textProps: el.type === "text" ? {
+							text: (el as any).text,
+							fontSize: (el as any).fontSize,
+							fontFamily: (el as any).fontFamily,
+							color: (el as any).color,
+							textAlign: (el as any).textAlign
+						} : undefined
+					};
+					return JSON.stringify(details, null, 2);
+				}
+			}
+		}
+		return "Clip not found.";
+	}
+
+	if (tool === "SEARCH_STICKERS") {
+		const query = params?.query;
+		if (!query) return "Error: query is missing.";
+		try {
+			const res = await searchStickers({ query, category: "all", limit: 10 });
+			const results = res.items.map(s => ({
+				id: s.id,
+				title: s.title,
+				url: s.url,
+				thumbnailUrl: s.thumbnailUrl
+			}));
+			return JSON.stringify(results, null, 2);
+		} catch (e: any) {
+			return `Error searching stickers: ${e.message || e}`;
+		}
 	}
 
 	if (tool === "LIST_MEDIA") {

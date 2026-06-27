@@ -236,6 +236,7 @@ When you are ready to finalize your plan, output EXACTLY this format:
 | Type | Parameters |
 |------|-----------|
 | REMOVE_SEGMENTS | \`{segmentIds: number[]}\` |
+| DELETE_CLIPS | \`{clipIds: string[]}\` |
 | REMOVE_FILLERS | \`{fillerWords: string[]}\` |
 | REMOVE_SILENCE | \`{threshold: number}\` — minimum silence duration in seconds |
 | TRIM_CLIP | \`{start: number, end: number}\` — timestamps in seconds |
@@ -264,6 +265,17 @@ When you are ready to finalize your plan, output EXACTLY this format:
 | AUTO_REFRAME | \`{targetRatio: string, subject?: string}\` |
 | ADD_EFFECT | \`{effectType: string, effectParams?: object, segmentIds?: number[], clipIds?: string[]}\` |
 | ADJUST_VISUALS | \`{brightness?: number, contrast?: number, saturation?: number, temperature?: number, vignette?: number, segmentIds?: number[], clipIds?: string[]}\` |
+| ADD_TRACK | \`{type: "video" | "audio" | "text" | "sticker" | "effect"}\` |
+| REMOVE_TRACK | \`{trackId: string}\` |
+| SET_TRACK_STATE | \`{trackId: string, muted?: boolean, hidden?: boolean}\` |
+| UPDATE_TRANSFORM | \`{clipIds: string[], scale?: number, x?: number, y?: number, rotation?: number, opacity?: number}\` |
+| UPDATE_VOLUME | \`{clipIds: string[], volume?: number, muted?: boolean}\` |
+| UPDATE_TEXT | \`{clipIds: string[], text?: string, fontSize?: number, fontFamily?: string, color?: string, textAlign?: string}\` |
+| MOVE_CLIP | \`{clipId: string, trackId?: string, startTime?: number}\` |
+| DUPLICATE_CLIPS | \`{clipIds: string[]}\` |
+| ADD_STICKER_OVERLAY | \`{stickerId: string, startTime: number, duration: number, x: number, y: number, scale: number}\` |
+| UPDATE_PROJECT_SETTINGS | \`{width?: number, height?: number, fps?: number, backgroundColor?: string, proxyEditing?: boolean}\` |
+| ADD_KEYFRAME | \`{clipId: string, property: string, time: number, value: any}\` |
 
 # BEHAVIORAL RULES
 

@@ -63,7 +63,19 @@ export type EditorActionType =
 	| "EXPORT_PROJECT"
 	| "ADD_EFFECT"
 	| "ADD_MEDIA_TO_TIMELINE"
-	| "ADJUST_VISUALS";
+	| "ADJUST_VISUALS"
+	| "DELETE_CLIPS"
+	| "ADD_TRACK"
+	| "REMOVE_TRACK"
+	| "SET_TRACK_STATE"
+	| "UPDATE_TRANSFORM"
+	| "UPDATE_VOLUME"
+	| "UPDATE_TEXT"
+	| "MOVE_CLIP"
+	| "DUPLICATE_CLIPS"
+	| "ADD_STICKER_OVERLAY"
+	| "UPDATE_PROJECT_SETTINGS"
+	| "ADD_KEYFRAME";
 
 export interface EditorAction {
 	type: EditorActionType;
