@@ -8,6 +8,7 @@ node_modules
 .turbo
 
 .env*
+.env
 !*.env.example
 
 # cursor

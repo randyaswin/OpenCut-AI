@@ -1,207 +1,215 @@
-# AGENT.md — OpenCut-AI Improvement Project
+# AGENT.md — OpenCut-AI Improvement Project (v2)
 
 ## Project context
 
-Repo: https://github.com/Ekaanth/OpenCut-AI (fork of OpenCut-app/OpenCut)
-Stack: Next.js (apps/web) + FastAPI ai-backend + 6 Python microservices
-(whisper, tts, image, speaker, face, clip-service) + turboquant-service,
-orchestrated via docker-compose.yml (Postgres, Redis, Ollama included).
+Repo: https://github.com/randyaswin/OpenCut-AI (fork of OpenCut-app/OpenCut, via
+Ekaanth/OpenCut-AI)
+Stack: Next.js (apps/web) + FastAPI ai-backend + Python microservices (whisper, tts, image,
+speaker, face, clip-service) + turboquant-service, orchestrated via docker-compose.yml
+(Postgres, Redis, Ollama included).
 
-This file documents carry-over lessons and conventions for any agent
-(Claude Code or otherwise) working on this repo. Read this before making
-changes. Update it when you learn something that the next session needs.
+This file is a continuation of the previous `AGENTS.md`. Phases 1–8 from that document were
+audited as implemented (see "Carried-over status" below) — **do not redo them**, but DO
+re-verify the specific claims against current `main` before building on top of them, since this
+document was written from README + prior AGENTS.md content, not a fresh source read.
 
-## Goals (in priority order)
+This v2 round has two missions:
+1. **Finish making the agent actually execute what it plans** (stub closure + tool-set
+   expansion) — the previous round built the skeleton (ReAct loop, confirmation policy,
+   ingest pipeline, persistence); this round makes the skeleton functionally complete.
+2. **Close the highest-impact feature gaps vs. CapCut** identified in `REVIEW.md`, prioritizing
+   things buildable by composing capabilities that already exist in this codebase.
 
-1. Make `docker compose up` work with zero manual fixing — env vars
-   wired correctly end-to-end (root `.env` → compose → container → app).
-2. Add a third LLM backend: OpenAI-compatible (OpenAI, OpenRouter, Groq,
-   vLLM, LM Studio, etc.) alongside the existing Ollama/TurboQuant
-   backends, auto-selected when configured, with graceful fallback.
-3. Rewrite the AI Co-Pilot to use a real tool-calling ReAct loop agent architecture
-   (Reason -> Act -> Observe -> Reason again) with an explicit confirmation policy.
-   The loop should support query tools (e.g. LIST_MEDIA, GET_MEDIA_METADATA) and timeline
-   actions, capping at a maximum number of iterations (e.g., 8) to prevent runaways.
-4. Wire up real implementations for the agent's editing actions — many
-   currently exist only as `console.warn(...)` stubs — and add new tools
-   for scene detection, auto-cut, auto-transition, auto-audio cleanup,
-   and AI-readable scene/person descriptions.
-5. Normalize GoPro/iPhone camera footage on ingest so it's editor- and
-   pipeline-compatible (container/codec/rotation/HDR quirks).
-6. Run a standard ingest pipeline on every asset added to a project
-   (object detection, scene description, transcript, EXIF/metadata
-   extraction) so the agent has structured per-asset context without
-   re-deriving it per-request.
-7. Guarantee project data (including all of the above derived metadata)
-   is durably persisted, not just held in memory/OPFS ephemeral state.
-8. Make image generation and scene description swappable to any
-   OpenAI-compatible (vision) endpoint, same pattern as the LLM backend.
-9. Make the agent's tool set complete enough for genuinely advanced
-   editing, not just the current narrow action list.
-10. Auto-select background music/SFX via Freesound or equivalent, driven
-    by transcript/scene mood rather than the user picking manually.
-11. Auto-reframe using real object detection (not just face detection)
-    for non-person subjects (pets, products, sports, etc.).
+Read `REVIEW.md` before this file if you want the reasoning behind what's prioritized and why.
 
-## Confirmation policy (decided, do not relitigate)
+## Carried-over status from AGENTS.md v1 (do not re-litigate, but DO re-verify)
 
-- Non-destructive actions (add subtitle track, add music, add text
-  overlay, generate image, color correct, normalize audio, auto-duck,
-  add transition, add chapter markers, auto-reframe preview, ingest
-  pipeline steps) → auto-execute, no confirmation.
-- Destructive/irreversible-feeling actions (REMOVE_SEGMENTS,
-  REMOVE_SILENCE, REMOVE_FILLERS, TRIM_CLIP, SPLIT_CLIP, EXPORT_PROJECT,
-  anything that deletes or overwrites timeline content or original
-  source files) → always show the step in the plan and require explicit
-  user confirmation before executing, even in "auto-run" mode.
-- Format/codec conversion of an uploaded source file (Phase 5) counts as
-  destructive if it replaces the original; non-destructive if it
-  produces a new derived/proxy file alongside the original. Default to
-  non-destructive (keep original, generate a normalized derivative) —
-  see Phase 5 notes.
-- This must be enforced in the system prompt AND in the executor (don't
-  rely on the LLM alone to gate destructive ops — the client-side
-  executor must also check an `isDestructive` flag per action type).
+These were marked done based on a prior audit. Confirm they still hold, then move on:
 
-## Known architecture facts (verified against source, don't re-derive)
+- ✅ OpenAI-compatible LLM backend (third path alongside Ollama/TurboQuant) in
+  `model_backend.py`, auto-selected with fallback.
+- ✅ ReAct agent loop (`apps/web/src/lib/copilot/agent-loop.ts`) with query tools
+  (`LIST_MEDIA`, `GET_MEDIA_METADATA`, `GET_TIMELINE_STATE`), streaming reasoning to UI.
+- ✅ Confirmation policy enforced in both system prompt and client-side executor
+  (`isDestructive` flag per action type) — **this pattern must extend to every new action
+  type added in this round**.
+- ✅ GoPro/iPhone normalization on ingest (HEVC/MOV/GPMF detection → conditional FFmpeg
+  transcode to H.264 MP4).
+- ✅ Async asset ingest pipeline (scene detection, transcription, CLIP zero-shot tagging,
+  EXIF/metadata extraction) triggered on upload, non-blocking.
+- ✅ Durable metadata persistence (Postgres `schema.ts`, linked by `assetId` to OPFS files).
+- ✅ Polished chat UI/UX (collapsible tool logs, auto-scroll, linear execution block, quick
+  action pills, mic input with `SpeechRecognition` + WAV fallback, auto-resize textarea).
 
-- `services/ai-backend/app/services/model_backend.py` is the single
-  chokepoint for all LLM calls (`generate`, `generate_stream`,
-  `generate_json`, `chat`). It already routes Ollama ⇄ TurboQuant. The
-  OpenAI-compatible backend must be added here as a third path, not
-  bolted on elsewhere.
-- `apps/web/src/types/ai.ts` defines `EditorActionType` — used by the
-  Co-Pilot (`apps/web/src/lib/copilot/copilot-types.ts`,
-  `apps/web/src/hooks/use-copilot.ts`).
-- `apps/web/src/lib/ai-action-executor.ts` is where Co-Pilot actions are
-  actually executed client-side. As of the last audit, these action
-  types are STUBS that only `console.warn`: `NORMALIZE_AUDIO`,
-  `AUTO_DUCK`, `COLOR_CORRECT`, `ADD_SUBTITLE_TRACK`,
-  `ADD_IMAGE_OVERLAY`, `TRIM_CLIP`, `ADD_TRANSITION`, `ADD_VOICEOVER`,
-  `DENOISE_AUDIO`, `GENERATE_IMAGE`, `ADD_MUSIC`, `EXPORT_PROJECT`. These
-  need real implementations calling existing editor/timeline APIs and/or
-  `aiClient` backend calls.
-- There is a SECOND, separate action vocabulary in
-  `services/ai-backend/app/routes/command.py` (`cut`, `trim`, `delete`,
-  `add_text`, etc.) used by `aiClient.executeCommand()` /
-  `/api/llm/command`. This is disconnected from the Co-Pilot's
-  `EditorActionType` system. Do not assume they're the same — reconcile
-  or explicitly bridge them, don't silently duplicate.
-- Real, callable backend capabilities already exist but are NOT wired
-  into the agent as tools: `silence_service.py` (silence detection),
-  `clip_detector.py` (multi-signal best-clip scoring), `topic_detector.py`
-  (chapter/topic boundaries via LLM), `face_reframe.py` (face-tracking
-  crop trajectories), `subtitle_service.py` (SRT/VTT generation). The
-  agent tool layer should call these, not reimplement them.
-- No scene/person visual description tool exists yet for AI input (the
-  README's "AI Scene Detection" is client-side color-histogram cut
-  detection only — it finds *when* a cut happens, not *what* is in the
-  frame). This needs a new tool, likely combining face-service +
-  clip-service (CLIP zero-shot tags) + a frame-sampling step, then
-  feeding a text description to the LLM.
-- No general object detection service exists yet (face-service is
-  face-only via mediapipe). Auto-reframe today is face-tracking only
-  (`face_reframe.py`). A real object detector (YOLOv8 `yolov8n.pt`) has been
-  added to the ingest pipeline (`ingest_pipeline.py`) to detect and tag objects in video frames and images.
-- No asset ingest pipeline exists yet. Today, transcription/analysis
-  happens on-demand per-feature (user clicks "transcribe", "denoise",
-  etc.), not automatically when a file is added to a project. Phase 6
-  introduces this as new infrastructure (a job queue consumer), it does
-  not just wire up existing buttons. The ingest pipeline now handles both videos and static images differently.
-- No video format-normalization step exists yet. GoPro (commonly
-  HEVC/H.265 in MP4, sometimes with GPMF metadata track, sometimes
-  high-FPS/HDR variable frame rate) and iPhone (HEVC in MOV, with
-  `rotation` matrix in the moov atom rather than baked-in pixels, and
-  ProRes/Dolby Vision on newer models) footage can both fail or render
-  incorrectly in browser-based playback/WebGL preview without an
-  explicit transcode/remux step. This has been resolved in Phase 5: 
-  The pipeline now checks if format is `.mov` or codec is `hevc`/`h265` or has `gpmd` metadata, 
-  and normalizes these specific files to `libx264` MP4 via FFmpeg.
-- Persistence today: `DATABASE_URL` (Postgres via `apps/web`) exists for
-  *some* project state already (see `apps/web/migrations/`), and most
-  media/timeline data lives in OPFS (Origin Private File System) per the
-  README ("All data local... Files stored in OPFS"). Derived AI metadata
-  (transcripts, detected objects, scene descriptions, EXIF) does NOT yet
-  have a defined persistence target. Phase 7 conclusion: 
-  `assetMetadata`, `transcripts`, `detectedObjects`, and `sceneDescriptions` 
-  are structurally persisted in Postgres (`schema.ts`), linked via `assetId` 
-  to the OPFS project assets. Batch APIs are used by the AI context to retrieve them.
-- `clip-service` already does CLIP embeddings + zero-shot tagging
-  (`POST /api/search/zero-shot-tags`, `embed-frames`, `embed-text`) —
-  this is a candidate building block for object/content tagging in the
-  ingest pipeline and for scene description, not something to duplicate.
-- Freesound integration already exists for manual sound search
-  (`FREESOUND_CLIENT_ID`/`FREESOUND_API_KEY`, `getFreesoundHeaders()` in
-  `apps/web/src/lib/api-keys.ts`). Auto-selection (Phase 9) should call
-  the existing Freesound search path programmatically from the agent,
-  not reimplement Freesound auth.
-- Root `.env.example` did not exist before this project (only
-  `apps/web/.env.example` and `services/ai-backend/.env.example`).
-  `docker-compose.yml` reads root `.env` via `${VAR:-default}`
-  substitution — without it, several features silently no-op.
-- `NEXT_PUBLIC_*` env vars (Sarvam, Smallest, Seedance, Replicate,
-  Stability, Luma API keys) must be passed as Docker build `ARG`s, not
-  just runtime `environment:`, to be inlined into the Next.js client
-  bundle. Previously several were missing as build args entirely.
-- `ai-backend`'s `config.py` defines `SMALLEST_API_KEY`,
-  `SEEDANCE_API_KEY`, `REPLICATE_API_TOKEN`, `STABILITY_API_KEY`,
-  `LUMA_API_KEY` but `docker-compose.yml` previously did not pass any of
-  them through as `OPENCUTAI_*` env vars to the `ai-backend` container —
-  always blank in Docker regardless of `.env`.
-- The AI Co-Pilot uses a unified, recursive ReAct loop agent runner implemented
-  in `apps/web/src/lib/copilot/agent-loop.ts`. This utility handles tool calling
-  (`LIST_MEDIA`, `GET_MEDIA_METADATA`, `GET_TIMELINE_STATE`) and streams
-  live reasoning tokens to the UI, returning a final `CopilotPlan` to the caller.
+Still open from v1 (carry forward into this plan's phases, renumbered below):
+- ⬜ Phase 9 (auto sound/music selection via Freesound) — not yet executed in code per last
+  audit. → becomes Phase 9 here, unchanged in scope, just re-sequenced.
+- ⬜ Phase 10/11 (object-detection-based auto-reframe beyond faces) — object detector exists
+  in the ingest pipeline (YOLOv8) per v1 audit, but `face_reframe.py` extension to non-face
+  subjects was not confirmed done. → becomes Phase 10 here.
+- ⬜ The stub action executor closure (4a in old PLAN.md) — confirm current state; if still
+  stubbed, this is now the **highest priority item** in this round (Phase 13 below), because
+  no amount of new agent intelligence matters if the agent can't execute its own plan.
 
-## Conventions to follow
+## Goals (in priority order, this round)
 
-- Settings UI for API keys follows a strict pattern in
-  `apps/web/src/components/editor/panels/assets/views/settings.tsx`
-  (`API_KEY_FIELDS` array + `APIKeysSection`). New provider keys go here,
-  matching the existing field shape (`key`, `label`, `placeholder`,
-  `description`, `envVar`, `envValue`, `info`, `required`).
-- Backend settings follow Pydantic `BaseSettings` in `app/config.py`,
-  prefixed `OPENCUTAI_`, mirrored into `.env.example` with comments.
-- "OpenAI-compatible" is now a pattern used in THREE places (LLM text,
-  image generation, vision/scene-description) — implement it once as a
-  small shared client helper (base_url + api_key + model + optional
-  extra headers → POST to the right sub-path) and reuse it for chat
-  completions, image generation (`/images/generations`), and vision
-  (`/chat/completions` with image content parts), rather than three
-  separate ad-hoc HTTP clients.
-- `"types": ["node"]` must stay in tsconfig where applicable (lesson
-  from prior unrelated project, keep an eye out for tsconfig drift in
-  this repo too).
-- Don't assume API/field names — verify shapes against actual source
-  before calling. This codebase has many near-identical but distinct
-  systems (two action vocabularies, multiple "scene" concepts — visual
-  cut detection vs. the version-control "scenes manager" in
-  `core/managers/scenes-manager.ts` — don't confuse them).
-- No Docker daemon available in some dev/agent sandboxes — verify
-  Python/TS syntax and type-check statically (`bun run typecheck`,
-  `python -m py_compile`, `ruff`/`mypy` if configured) when you can't
-  actually run `docker compose up`. Flag clearly in PR description what
-  was verified statically vs. actually run end-to-end.
-- Any new heavy dependency (object detector model weights, ffmpeg
-  filters for GoPro/iPhone transcode, etc.) must follow the existing
-  per-service `requirements.txt` + `requirements.lock` (`uv pip compile
-  --universal`) pattern documented in the README — don't hand-edit lock
-  files.
-- New persistent metadata tables go through the existing migrations
-  mechanism in `apps/web/migrations/` (Drizzle or whatever is already in
-  use there — check before assuming) rather than ad-hoc SQL.
+1. **Close every remaining stub in `ai-action-executor.ts`.** An agent that plans but cannot
+   execute is not "maximal" regardless of how good its reasoning is. This is non-negotiable
+   priority #1 before any new feature work.
+2. **Unify the two action vocabularies** (`EditorActionType` used by Co-Pilot vs. the
+   `cut`/`trim`/`delete`/`add_text` vocabulary in `command.py`) or explicitly bridge them with a
+   documented adapter — stop letting them drift further apart with every new feature.
+3. **Expose existing-but-unreachable backend capabilities as agent tools**: `silence_service`,
+   `clip_detector`, `topic_detector`, `face_reframe`, `subtitle_service`, beat detection, and
+   the CLIP zero-shot tagger. The agent should call these instead of guessing timestamps or
+   re-deriving information that's already computed and stored.
+4. **Add granular observation tools** so the agent can inspect specific moments instead of only
+   reasoning from ingest-time summaries: `GET_FRAME_AT(timestamp)` (returns a sampled frame as
+   an image for vision-capable models), `GET_TRANSCRIPT_RANGE(start, end)`, `GET_CLIP_NEIGHBORS`
+   (what's immediately before/after a given clip on the timeline). Without this, the agent
+   cannot do anything that requires looking at a specific point in the edit, only summary-level
+   reasoning.
+5. **Add a batch-operation primitive**: a single action type that applies a transform (cut,
+   transition, filter, mute) across a *set* of matched segments/clips, with one confirmation
+   gate for the whole batch rather than N separate gates. Needed for goals like "remove all
+   filler words in the whole video" to be usable without confirmation fatigue.
+6. **Make the agent template-aware**: expose the 8 existing project templates as a tool
+   (`LIST_TEMPLATES`, `APPLY_TEMPLATE`) so goal-described requests ("make this a TikTok vlog")
+   can start from a matching template rather than building a timeline from zero every time.
+7. **Close the highest-impact CapCut feature gaps** identified in `REVIEW.md`, in this order
+   (each chosen because it composes existing building blocks rather than requiring new core
+   infrastructure):
+   - Auto-translate + auto-dub pipeline (transcript → LLM translate → TTS in target voice).
+   - Auto-cut-to-beat (beat detection → cut point generation, as one agent action).
+   - Cross-clip color match (sample reference clip's color stats → apply correction to target
+     clip(s), not just preset-based correction).
+   - AI B-roll insertion from transcript (detect "boring"/low-visual-variety segments via
+     existing scene description + silence/energy signals → suggest or generate cutaway via
+     existing AI Video Generation Hub).
+   - Reverse / loop / boomerang clip effect (FFmpeg filter — low effort, bundle with other
+     quick "effect" wins).
+   - Per-word animated caption presets (pop/bounce/typewriter), extending the existing
+     karaoke/pill/classic subtitle styling.
+8. **AI background removal without a green screen** (matting/segmentation model — e.g. RVM,
+   MODNet, or a SAM-family lightweight variant — added as a new microservice following the
+   existing per-service `requirements.txt`/`requirements.lock` pattern). This is the single
+   highest-value gap vs. CapCut that genuinely requires new model infrastructure rather than
+   recombination — sequence it after the lower-effort items above, not before.
+9. (Carried from v1) Auto-select background music/SFX via Freesound, mood/energy-driven.
+10. (Carried from v1) Extend auto-reframe to non-person subjects using existing object
+    detection output.
 
-## Implemented System Architectures (Phase 1 to 8 Summary)
+## Confirmation policy (decided in v1, extended here — do not relitigate the base rule)
 
-- **OpenAI-Compatible Providers**: Integrations are standardized to allow OpenAI, OpenRouter, and local vLLM/LM Studio. Configuration fields exist in settings panel and are saved to browser local settings and forwarded as API headers.
-- **Agent Loop and Native Function Calling**: The Co-Pilot leverages a recursive ReAct agent loop in client-side TS with server-side JSON tool calls, falling back gracefully for models that don't support native tool definitions.
-- **GoPro/iPhone Normalization**: The backend checks for HEVC / MOV / GPMF files and transcodes them conditionally to H.264 mp4. This handles rotation and browser compatibility correctly.
-- **Ingest Pipeline**: Ingest triggers asynchronously when a file is imported. It runs scene detection, transcription, CLIP zero-shot tagging, and EXIF/metadata extraction without blocking the main editor UI.
-- **Durable Metadata Persistence**: Derived assets metadata, transcript segments, and tags are persisted in Postgres schema (`schema.ts`) and linked by `assetId` to OPFS files.
-- **Polished Chat UI/UX**:
-  - Collapsible tool logs rendering raw reasoning and JSON tool execution.
-  - Automatic scrolling behavior ensuring the current thinking tokens and plan steps are visible, while maintaining readable layout for previous response segments.
-  - Linear execution block displaying upcoming steps of editing plans, with explicit validation of destructive vs non-destructive action types.
-  - Quick action suggestion pills above the input textarea.
-  - Mic button supporting native `SpeechRecognition` web API with a fallback to WAV-recorded blobs sent to `/api/transcribe`.
-  - Auto-resizing textarea input.
+Base rule unchanged: non-destructive auto-executes; destructive/irreversible-feeling requires
+explicit confirmation; this must be enforced in both system prompt and client-side executor.
+
+Extensions needed this round:
+- **Batch operations** (Goal 5): the *batch as a whole* gets one confirmation step showing all
+  matched segments before execution, if any individual action in the batch is destructive. The
+  agent must show the full match list (not just a count) so the user can deselect items before
+  confirming.
+- **Cross-clip color match and B-roll insertion** are non-destructive (they add/adjust, don't
+  remove) → auto-execute, but the *generation* sub-step (calling a paid video-gen API for B-roll)
+  should still surface estimated cost/time if the configured provider is metered, before
+  insertion — this is a cost-transparency concern, not strictly a destructiveness one; encode it
+  as a separate `requiresCostConfirmation` flag if the existing `isDestructive` flag doesn't fit
+  cleanly. Don't overload `isDestructive` with unrelated semantics.
+- **Auto-dub** replacing original audio is destructive (overwrites the audio track) unless it's
+  added as a new alternate audio track — default to the non-destructive form (new track,
+  switchable), per the same precedent set for GoPro/iPhone normalization in v1 (keep original,
+  add derivative).
+- **Background removal** is non-destructive if applied to a duplicated/matted layer; destructive
+  if it replaces the original clip's pixels in place. Default to non-destructive.
+
+## Known architecture facts (carried from v1 — re-verify before trusting, don't re-derive)
+
+- `services/ai-backend/app/services/model_backend.py` is the single chokepoint for all LLM
+  calls (`generate`, `generate_stream`, `generate_json`, `chat`); already routes
+  Ollama ⇄ TurboQuant ⇄ OpenAI-compatible (verify the third path is actually live, per v1 Phase 2).
+- `apps/web/src/types/ai.ts` defines `EditorActionType`, used by `copilot-types.ts` and
+  `use-copilot.ts`.
+- `apps/web/src/lib/ai-action-executor.ts` is where Co-Pilot actions execute client-side. **Per
+  the last audit, confirm current stub status before assuming any of the previously-listed
+  stubs (`NORMALIZE_AUDIO`, `AUTO_DUCK`, `COLOR_CORRECT`, `ADD_SUBTITLE_TRACK`,
+  `ADD_IMAGE_OVERLAY`, `TRIM_CLIP`, `ADD_TRANSITION`, `ADD_VOICEOVER`, `DENOISE_AUDIO`,
+  `GENERATE_IMAGE`, `ADD_MUSIC`, `EXPORT_PROJECT`) are actually wired now** — Goal 1 of this
+  round assumes some may still be open; verify file-by-file rather than trusting this note.
+- Second, separate action vocabulary lives in `services/ai-backend/app/routes/command.py`
+  (`cut`, `trim`, `delete`, `add_text`, etc.), used by `aiClient.executeCommand()` /
+  `/api/llm/command`. Per v1, this was never reconciled with `EditorActionType` — Goal 2 of this
+  round addresses it directly; don't let a third vocabulary spawn for new features.
+- `silence_service.py`, `clip_detector.py`, `topic_detector.py`, `face_reframe.py`,
+  `subtitle_service.py` are real, tested backend capabilities. Per v1 audit they were *still not
+  wired in as agent tools* as of last check — re-verify, this is Goal 3.
+- Object detection (YOLOv8, `yolov8n.pt`) was added to the ingest pipeline in v1
+  (`ingest_pipeline.py`). This is the foundation for Goal 10 (non-face auto-reframe) — don't
+  rebuild detection, only extend `face_reframe.py`'s crop-trajectory logic to accept non-face
+  detected objects as the tracked subject.
+- `clip-service` does CLIP embeddings + zero-shot tagging (`/api/search/zero-shot-tags`,
+  `embed-frames`, `embed-text`) — reuse for B-roll relevance matching (Goal 7) rather than
+  building a separate content-matching system.
+- Freesound integration exists for manual sound search (`FREESOUND_CLIENT_ID`/
+  `FREESOUND_API_KEY`, `getFreesoundHeaders()` in `apps/web/src/lib/api-keys.ts`) — Goal 9 calls
+  this programmatically, doesn't reimplement auth.
+- Beat detection exists (BPM, beat strength visualization, snap-to-beats) per README — Goal 7's
+  auto-cut-to-beat reuses this, adding only the "generate cut points at beat boundaries" logic
+  and the agent action wrapper, not new beat-detection code.
+- 8 project templates exist (YouTube Intro, TikTok Vlog, Podcast Highlight, Product Review,
+  Classroom Lesson, Instagram Reel, Travel Vlog, Tutorial) with search/filter/apply UI — Goal 6
+  exposes the existing apply mechanism as an agent tool, doesn't build a new template system.
+- No general-purpose background matting/segmentation service exists yet (face-service is
+  mediapipe face-only; chroma key requires an actual physical green screen). Goal 8 is new
+  infrastructure — sequence it last among the feature-gap goals, after the recombination-only
+  items, per the effort/impact ordering in `REVIEW.md`.
+- No translation step exists in the pipeline yet (transcription and TTS are separate, unconnected
+  features per the source list). Goal 7's auto-dub needs a new but small "translate transcript
+  segments" step using the existing LLM backend (`model_backend.generate_json` with a translation
+  prompt) — don't add a dedicated translation API/service unless the LLM-based approach proves
+  insufficient in testing.
+
+## Conventions to follow (carried from v1, unchanged — these are still correct)
+
+- Settings UI for new API keys (e.g. a future segmentation-model config, if it needs external
+  inference) follows the `API_KEY_FIELDS` array + `APIKeysSection` pattern in
+  `apps/web/src/components/editor/panels/assets/views/settings.tsx`.
+- Backend settings follow Pydantic `BaseSettings` in `app/config.py`, prefixed `OPENCUTAI_`,
+  mirrored into `.env.example` with comments.
+- "OpenAI-compatible" client helper (LLM text, image gen, vision) should be reused, not
+  reimplemented, for the translation step in Goal 7 (it's just another `generate_json` call
+  through the existing chat completion path).
+- `"types": ["node"]` must stay in tsconfig where applicable.
+- Don't assume API/field names — verify shapes against actual source before calling. Watch for
+  near-identical-but-distinct systems (two action vocabularies per Goal 2; "scene detection"
+  visual cut-detection vs. the version-control `core/managers/scenes-manager.ts` — still
+  unrelated, still don't conflate).
+- No Docker daemon may be available in some dev/agent sandboxes — verify statically
+  (`bun run typecheck`, `python -m py_compile`, `ruff`/`mypy`) when you can't run
+  `docker compose up`. Flag clearly what was verified statically vs. actually run.
+- New heavy dependencies (e.g. a matting model's weights for Goal 8) follow the existing
+  per-service `requirements.txt` + `requirements.lock` (`uv pip compile --universal`) pattern.
+  A new model service (e.g. `matting-service`) follows the same Dockerfile/uv/lockfile shape as
+  the existing seven Python services — check `face-service`'s Dockerfile as the closest analog
+  (small CV model, possible platform pinning if the chosen model lacks aarch64 Linux wheels).
+- New persistent metadata (e.g. per-asset matting masks, translation cache, beat-grid cut points)
+  goes through the existing migrations mechanism in `apps/web/migrations/`.
+- Any new agent action type must (a) get added to `EditorActionType` in `ai-action-executor.ts`
+  with a real implementation from day one — no new stubs are to be merged, ever, given Goal 1's
+  priority — and (b) get an explicit `isDestructive` (and, where relevant,
+  `requiresCostConfirmation`) classification at definition time, not as an afterthought.
+
+## What "maximal" means for this agent (definition of done for the AI-agent review)
+
+The AI Co-Pilot is considered maximal for this round when:
+- Every action type it can plan, it can actually execute (Goal 1).
+- It can call every analysis capability the backend already has, instead of guessing (Goal 3).
+- It can observe specific moments in the timeline on demand, not just ingest-time summaries
+  (Goal 4).
+- It can act on "the whole video" goals without per-clip confirmation fatigue (Goal 5).
+- It can start from a matching template instead of zero (Goal 6).
+- It has parity (not superiority — that's a longer-term goal) with CapCut's highest-traffic
+  AI-assist features: auto-dub, beat-synced cuts, cross-clip color match, AI B-roll suggestion,
+  and background removal without a green screen (Goals 7–8).
+
+This is intentionally scoped to be achievable in one well-resourced execution pass, not a
+rewrite. Phase 9–11 items carried from v1 remain valid and are sequenced into the plan below.

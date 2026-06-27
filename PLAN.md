@@ -1,515 +1,416 @@
-# PLAN.md — OpenCut-AI Improvement Project
+# PLAN.md — OpenCut-AI Improvement Project (v2)
 
-Status: NOT STARTED — this is a plan for an agent to execute, no code
-has been changed in the actual repo yet beyond a throwaway audit.
+Status: NOT STARTED — plan for an agent to execute. Phases 1–8 from the v1 plan are marked done
+per `AGENTS.md` v2's "Carried-over status" section. Phases 9–11 from v1 were defined but, per
+last audit, not confirmed executed in code — they are **re-included below, unchanged in scope**,
+just resequenced so this document is the single source of truth going forward. New phases start
+at 12.
 
-## Phase 0 — Setup
-- [ ] create a feature branch.
-- [ ] Read AGENT.md fully.
-- [ ] Re-verify the "Known architecture facts" against current `main`
-      (the repo may have moved since this plan was written) — grep for
-      the specific files/functions named before trusting them.
+Read `REVIEW.md` first for the reasoning behind prioritization.
 
-## Phase 1 — Make it run cleanly
-- [ ] Add root `.env.example` covering every `${VAR:-default}` referenced
-      in `docker-compose.yml` (LLM backend selection, Ollama model,
-      Whisper size, memory/tier budgets, KV cache bits, TurboQuant model,
-      compute mode, HF_TOKEN, Sarvam/Smallest/Seedance/Replicate/
-      Stability/Luma keys, CLIP model config, Freesound, Marble, R2/Modal
-      transcription, BETTER_AUTH_SECRET).
-- [ ] Fix `ai-backend` service block in `docker-compose.yml`: pass
-      through `OPENCUTAI_SMALLEST_API_KEY`, `OPENCUTAI_SEEDANCE_API_KEY`,
-      `OPENCUTAI_REPLICATE_API_TOKEN`, `OPENCUTAI_STABILITY_API_KEY`,
-      `OPENCUTAI_LUMA_API_KEY` (defined in `config.py`, never wired).
-- [ ] Fix `apps/web/Dockerfile`: add missing `ARG`/`ENV` pairs for
-      `NEXT_PUBLIC_SARVAM_API_KEY`, `NEXT_PUBLIC_SMALLEST_API_KEY`,
-      `NEXT_PUBLIC_SEEDANCE_API_KEY`, `NEXT_PUBLIC_REPLICATE_API_TOKEN`,
-      `NEXT_PUBLIC_STABILITY_API_KEY`, `NEXT_PUBLIC_LUMA_API_KEY` so
-      they're inlined at build time, not just set at runtime.
-- [ ] Fix `web` service `build.args` in `docker-compose.yml` to pass the
-      above through from root `.env`.
-- [ ] Fix hardcoded `BETTER_AUTH_SECRET` in the `web` service to read
-      from `${BETTER_AUTH_SECRET:-...}` instead of a literal string.
-- [ ] Validate `docker-compose.yml` syntax (YAML parse at minimum; run
-      `docker compose config` if Docker is available in the execution
-      environment).
-- [ ] Do a real `docker compose build --parallel && docker compose up -d`
-      run if the environment allows it; capture and fix any startup
-      errors per-service (check `docker compose logs <service>` for each
-      of the 13 services). If Docker isn't available, document exactly
-      what couldn't be verified.
-- [ ] Confirm `/health` (ai-backend) and `/api/health` (web) both return
-      200 once stack is up.
+## Phase 0 — Setup & re-verification
 
-## Phase 2 — OpenAI-compatible LLM backend
-- [ ] `app/config.py`: add `OPENAI_BASE_URL`, `OPENAI_API_KEY`,
-      `OPENAI_MODEL`, `OPENAI_TIMEOUT`, `OPENAI_EXTRA_HEADERS` settings
-      (prefixed `OPENCUTAI_` via existing `env_prefix`).
-- [ ] `services/ai-backend/.env.example`: document the new vars with
-      examples for OpenAI, OpenRouter, Groq, LM Studio, vLLM.
-- [ ] `app/services/model_backend.py`: add `_openai_generate`,
-      `_openai_generate_stream`, `_openai_chat` methods following the
-      same shape as the existing `_tq_*` methods (they already hit an
-      OpenAI-compatible `/v1/chat/completions` endpoint on TurboQuant, so
-      the request-building logic is nearly identical — reuse/extract a
-      shared helper if it cleans things up; per AGENT.md conventions,
-      this shared helper should be designed so Phase 8 and Phase 9b can
-      reuse it for image/vision endpoints too).
-- [ ] Add `_should_use_openai_compatible()` selection logic: returns true
-      when `AI_LLM_BACKEND` is `"openai_compatible"`, or `"auto"` AND
-      `OPENAI_API_KEY` is non-empty. Auto-priority order: openai_compatible
-      → turboquant → ollama.
-- [ ] Update `generate`, `generate_stream`, `generate_json`, `chat`,
-      `check_available`, `get_status` to branch through the new backend
-      with try/except fallback to the next backend in priority order, not
-      just to Ollama (don't regress the existing TurboQuant fallback
-      behavior).
-- [ ] `app/routes/llm.py`: surface `active_backend` correctly including
-      `"openai_compatible"`, and the configured model name, in
-      `/api/llm/status`.
-- [ ] Frontend: add `openaiCompatible` field to `API_KEY_FIELDS` in
-      `settings.tsx` (key, base URL, model — likely 3 inputs grouped, not
-      the single-field pattern used elsewhere; check whether the existing
-      component supports multi-field groups or needs a small variant).
-- [ ] Frontend: `apps/web/src/lib/ai-client.ts` — confirm whether the
-      frontend needs to send any client-set override (e.g. user pastes
-      their own OpenAI key in Settings rather than env) through to
-      `/api/llm/chat` per-request, matching the existing
-      `getStoredApiKey`/header-passthrough pattern used for Sarvam/
-      Smallest/Seedance/Replicate/Stability/Luma. Decide: does the
-      OpenAI-compatible key live server-side only (env), or can the user
-      override it from the browser? Recommend server-side env only for
-      v1 (simpler, keeps key off the client) unless the user specifically
-      wants BYOK-from-browser.
-- [ ] Test against at least one real OpenAI-compatible endpoint
-      (suggest: a free/cheap one like Groq or a local LM Studio instance)
-      to confirm `generate_json` parsing still works — small/local models
-      are flaky at strict JSON; the existing `_parse_json_response` repair
-      logic in `model_backend.py` should already help here, verify it's
-      not bypassed for the new backend.
+- [ ] Create a feature branch.
+- [ ] Read `AGENTS.md` (v2) fully, then the original v1 content it carries forward.
+- [ ] Re-verify against current `main` (don't trust prior audit blindly — it may be stale):
+  - [ ] Grep `ai-action-executor.ts` for every action type listed as a "stub" in AGENTS.md.
+        Produce an actual current list of what's stubbed vs. implemented — this determines the
+        real scope of Phase 13 below.
+  - [ ] Confirm whether `command.py`'s vocabulary and `EditorActionType` have been reconciled
+        since v1, or still diverged.
+  - [ ] Confirm whether Phase 9 (Freesound auto-select) and Phase 10/11 (object-detection-based
+        reframe) from v1 have any partial implementation already, vs. fully unstarted.
+  - [ ] Confirm the OpenAI-compatible LLM backend (v1 Phase 2) is genuinely live and selectable,
+        not just scaffolded.
 
-## Phase 3 — Rewrite the agent system prompt
-- [ ] Replace `COPILOT_SYSTEM_PROMPT` in
-      `apps/web/src/lib/copilot/copilot-types.ts` with a prompt that:
-      - Explicitly lists tool/action types with params (keep the
-        existing list, extend per Phase 4/9/10/11).
-      - States the confirmation policy from AGENT.md explicitly: which
-        action types are auto-executable vs. require confirmation, and
-        instructs the model to still emit confirmable steps in the plan
-        (don't omit them) but mark them.
-      - Adds a `requiresConfirmation` field at the per-step level (today
-        it's only a single plan-level boolean) — update
-        `CopilotStep`/`CopilotPlan` types in `copilot-types.ts`
-        accordingly, and `use-copilot.ts`'s `executePlan` to pause and
-        wait for per-step confirmation when that flag is true, rather
-        than running straight through.
-      - Encourages multi-step plans that chain tool outputs (e.g.
-        transcribe → detect silence → remove silence → detect topics →
-        add chapters) rather than one-shot single actions.
-      - Gives the model the actual current project context shape (it
-        already receives `buildProjectContext()` output — make sure the
-        prompt explains what that JSON means, and extend that context to
-        include per-asset ingest metadata from Phase 6 once it exists, so
-        the agent can reason over "which clip has a dog in it" without an
-        extra round-trip).
-- [ ] Add a companion "agent mode" system prompt variant (or a flag in
-      the same prompt) for fully autonomous multi-tool runs vs. simple
-      single-command natural language edits — decide whether
-      `command.py`'s `COMMAND_SYSTEM_PROMPT` should be deprecated in
-      favor of routing everything through the Co-Pilot's richer action
-      set, or kept separate for quick single commands. Recommend:
-      keep `command.py` for fast single-shot text commands ("speed up
-      the middle"), use the Co-Pilot path for anything multi-step or
-      goal-described.
+---
 
-## Phase 4 — Real tool implementations + new tools
+## Phase 9 (carried from v1) — Auto sound/music selection via Freesound
 
-### 4a. Fix existing stubs in `ai-action-executor.ts`
-For each of these, replace the `console.warn` stub with a real
-implementation, calling either `EditorCore` timeline APIs directly (like
-`SPLIT_CLIP`/`ADJUST_SPEED` already do) or `aiClient` backend calls
-(like TTS/image gen):
-- [ ] `TRIM_CLIP` — call timeline trim API on the matching element.
-- [ ] `ADD_TRANSITION` — call timeline transition-insert API; verify
-      against the 20 built-in transitions named in the README.
-- [ ] `ADD_SUBTITLE_TRACK` — call `aiClient.generateSubtitles` +
-      insert resulting cues onto a new text/subtitle track.
-- [ ] `ADD_IMAGE_OVERLAY` — call `aiClient.generateImage` (Phase 8: now
-      possibly routed through OpenAI-compatible image gen), then insert
-      result as an image element via timeline API (mirror the existing
-      `ADD_TEXT_OVERLAY` pattern for track lookup/insert).
-- [ ] `ADD_VOICEOVER` — call `aiClient.generateSpeech`/`generateSpeechBlob`,
-      insert as audio element.
-- [ ] `DENOISE_AUDIO` — call backend `audio_service` denoise endpoint,
-      replace/insert resulting audio.
-- [ ] `GENERATE_IMAGE` — same as ADD_IMAGE_OVERLAY's generation step but
-      without auto-placement (asset-panel insert only, per existing
-      action semantics — check `previewAction` wording to confirm intent).
-- [ ] `ADD_MUSIC` — call the AI Music Generation backend endpoint
-      (locate it under `services/ai-backend/app/routes/generate.py` or
-      similar — verify exact route name), insert onto an audio track.
-      Phase 9 will add a smarter auto-select variant; this stub fix is
-      just wiring the existing manual generation path.
-- [ ] `NORMALIZE_AUDIO` — call LUFS normalization backend endpoint.
-- [ ] `AUTO_DUCK` — call auto-duck backend endpoint with duck
-      amount/fade params.
-- [ ] `COLOR_CORRECT` — apply one of the 8 documented color-correction
-      profiles via the effects/filter system already used by manual
-      color grading UI.
-- [ ] `EXPORT_PROJECT` — call export route with format/quality params;
-      this one should remain confirmation-gated per the policy in
-      AGENT.md even though it's not literally destructive to the
-      project (it's slow/resource-heavy and user should approve).
+Goal: the agent can pick and insert appropriate background music/SFX automatically based on
+content (mood, energy, transcript sentiment), rather than requiring the user to manually search.
 
-### 4b. Wire existing-but-disconnected backend services as agent tools
-- [ ] `silence_service.detect_silences` → expose as a tool the agent can
-      call mid-plan (not just the existing manual "Smart Cut" button
-      path) — likely needs a new `/api/llm/tools/*` or reuse of
-      `/api/analyze/silences`, returning data the LLM can reason over
-      before emitting a `REMOVE_SILENCE` action with real timestamps
-      instead of guessing.
-- [ ] `clip_detector` (multi-signal scoring) → tool for "find best
-      clips" goals, feeding into `ADD_CHAPTER_MARKERS` or a new
-      `CREATE_CLIP_RANGE` action type.
-- [ ] `topic_detector.detect_boundaries` → tool backing
-      `ADD_CHAPTER_MARKERS`, replacing any ad-hoc LLM guessing of
-      chapter times with the dedicated, already-tested service.
-- [ ] `face_reframe.compute_crop_trajectory` → tool backing the
-      `AUTO_REFRAME` action type (see Phase 11 — this becomes the
-      face-only fallback path when no other detected object is the
-      target subject).
-- [ ] `subtitle_service` → confirm it's what `ADD_SUBTITLE_TRACK` (4a)
-      actually calls, don't reimplement SRT/VTT formatting client-side.
+- [ ] Reuse existing Freesound integration (`FREESOUND_CLIENT_ID`/`FREESOUND_API_KEY`,
+      search/preview/download flow) as primary backend — call it programmatically from a new
+      agent tool, don't reimplement search/auth.
+- [ ] Confirm fallback path: local AI Music Generation (15 genres/12 moods/3 tempos) when
+      Freesound has no key configured or no good match. Don't build a second external
+      integration speculatively.
+- [ ] New agent tool: given project context (transcript sentiment/energy, scene mood, target
+      duration), produce a Freesound search query or local-generation params, then auto-select
+      by simple scoring (license — prefer CC0/CC-BY — duration fit, rating).
+- [ ] Surface license/attribution requirement to the user when a CC-BY track is auto-selected —
+      this is a real legal-exposure detail, not optional polish.
+- [ ] New action type `AUTO_SELECT_SOUND` (non-destructive) in the action vocabulary, following
+      the unification work from Phase 14 if that lands first — otherwise add to both
+      vocabularies with an explicit TODO to merge.
 
-### 4c. Scene/person description tool (moved/expanded — see Phase 6)
-This was originally scoped here as a standalone feature; it's now the
-core deliverable of Phase 6's ingest pipeline (run automatically per
-asset) AND a manually-invokable agent tool (for re-running on demand,
-e.g. after a new clip is added mid-edit). Implement the underlying
-capability once in Phase 6, expose it as both an automatic pipeline step
-and an explicit `DESCRIBE_SCENES` agent action that re-triggers it
-on-demand for a specific asset/time range.
+## Phase 10 (carried from v1) — Auto-reframe with object detection
 
-## Phase 5 — GoPro / iPhone format compatibility (new)
+Goal: extend the existing face-only Smart Reframe (`face_reframe.py`) to track non-person
+subjects (pets, products, sports action, vehicles) using the ingest pipeline's object detection
+output.
 
-Goal: footage from GoPro and iPhone cameras imports, previews, and
-exports correctly, without the user needing to manually transcode first.
+- [ ] Confirm object detection output schema (`{label, confidence, bbox, timestamp}` per v1) is
+      stable and queryable per-asset before building on it.
+- [ ] Extend `face_reframe.py`'s crop-trajectory logic (or add a sibling `object_reframe.py`
+      sharing the same `CropRegion`/interpolation code — prefer extending/sharing) to accept a
+      target subject that may be a face OR a detected object class/instance.
+- [ ] Subject selection: if specified ("keep the dog centered"), match against detected labels;
+      if unspecified, priority order: person/face (existing, don't regress) → largest/most
+      central high-confidence object → existing center-crop/Ken-Burns fallback.
+- [ ] Handle multi-subject case consistently with existing multi-face logic (bbox union, pan if
+      too wide) — reuse shape, don't invent a parallel algorithm.
+- [ ] Keep existing 4 aspect-ratio presets and UI entry point — this is an enhancement, not a
+      new UI surface, unless product wants a separate toggle to distinguish from pure face mode.
+- [ ] Extend the existing reframe action with an optional `targetObjectLabel` param, or add
+      `AUTO_REFRAME` as a distinct action type — pick one, don't have two competing entry points.
 
-- [ ] Research and document the actual failure modes before writing
-      code — don't guess:
-      - [ ] iPhone: HEVC (H.265) in `.MOV`, rotation often stored as a
-            display matrix in the moov atom rather than baked into pixel
-            data (causes sideways/upside-down playback in players that
-            ignore the matrix); ProRes and Dolby Vision/HDR variants on
-            newer Pro models; `.HEIC` photos if stills are imported too.
-      - [ ] GoPro: HEVC or H.264 in `.MP4`; GPMF metadata track
-            (telemetry — GPS, gyro, accel) embedded as a non-standard
-            stream that some demuxers choke on; high frame rate
-            (120/240fps) and variable frame rate in some modes; HDR10+
-            on newer models (HERO11+).
-      - [ ] Confirm which of these actually break the current pipeline
-            (browser `<video>`/WebGL preview, FFmpeg-based export,
-            Whisper audio extraction) vs. which already work — test with
-            real sample files from both camera types before assuming a
-            fix is needed everywhere.
-- [ ] Add a new ingest step (likely inside the Phase 6 pipeline, or just
-      before it) that:
-      1. Probes the uploaded file with `ffprobe` for codec, container,
-         rotation matrix, HDR metadata, and frame rate.
-      2. If the file is already broadly compatible (H.264 in MP4, no
-         problematic rotation matrix, SDR, standard frame rate), skip
-         conversion entirely — don't waste time/quality re-encoding
-         files that are already fine.
-      3. If incompatible, generate a normalized derivative (default: not
-         destructive — keep the original, store a converted proxy/
-         working copy) using FFmpeg: bake rotation into pixels (or strip
-         the display matrix consistently, pick one and document why),
-         tone-map HDR→SDR if needed for preview (keep HDR export
-         capability separate/optional, don't silently lose HDR data the
-         user wanted), and re-mux/transcode codec only if the target
-         codec genuinely isn't supported by the preview/export pipeline.
-      4. Strip or separately extract the GPMF telemetry track rather
-         than letting it break standard demuxing — decide whether GPS/
-         telemetry data is worth surfacing anywhere in the UI (e.g. as
-         asset metadata) or simply discarded; lean toward capturing it
-         into the Phase 6/7 metadata store if cheap to do, since it's
-         genuinely useful provenance data (capture location, motion).
-- [ ] Add backend route (e.g. `POST /api/video/normalize` or fold into
-      the asset-upload route from Phase 6) and surface conversion status
-      in the UI (e.g. "Optimizing iPhone footage for editing..." similar
-      to existing proxy-generation UX already in the README).
-- [ ] Add explicit test fixtures: at least one real (or representative
-      synthetic) GoPro HEVC+GPMF sample and one real iPhone HEVC+rotation
-      sample, used in an automated or documented manual test, not just
-      "should work in theory."
-- [ ] Document in AGENT.md exactly what was found to be broken vs. fine,
-      replacing the speculative list above with verified facts.
+## Phase 11 (carried from v1) — Verification of v1 carryover work
 
-## Phase 6 — Automatic asset ingest pipeline (new)
+- [ ] Type-check (`bun run typecheck`) across `apps/web`.
+- [ ] Python static checks (`ruff`/`mypy`, else `python -m py_compile`) across
+      `services/ai-backend` and any touched service directories.
+- [ ] If Docker available: drive one Freesound auto-select goal end-to-end, one non-face
+      auto-reframe run, confirm both persist correctly per Phase 7 (v1) persistence guarantees.
+- [ ] If Docker not available: state clearly what was only statically verified.
+- [ ] Update `AGENTS.md` with anything learned.
 
-Goal: the moment a video/audio/image asset is added to a project, it's
-automatically run through a standard analysis pipeline — object
-detection, scene description, transcript, EXIF/metadata extraction —
-so the agent never has to ask the user "what's in this clip?" or wait on
-a slow on-demand analysis mid-conversation.
+---
 
-- [ ] Design the pipeline as an async job, not a blocking call on
-      upload — asset should be usable in the editor immediately;
-      metadata populates as it completes (resolves the "Open question"
-      in AGENT.md in favor of async, unless investigation in Phase 0
-      re-verification finds a strong reason otherwise).
-- [ ] Reuse the existing `job_queue.py` service (Redis-backed per
-      docker-compose, with in-memory fallback per README) rather than
-      building a second queue system.
-- [ ] Pipeline steps per asset (branch by media type — video/audio/
-      image — not every step applies to every type):
-      1. **Format/EXIF/metadata extraction** — `ffprobe` for video/audio
-         (codec, resolution, fps, duration, rotation, HDR flags, camera
-         make/model if present in metadata, creation timestamp, GPS if
-         present); EXIF library for images (camera make/model, GPS,
-         orientation, capture timestamp, lens info). This is cheap and
-         should run first/always.
-      2. **GoPro/iPhone normalization check** — call Phase 5's
-         probe-and-conditionally-convert step here, video assets only.
-      3. **Transcript** — run existing Whisper transcription
-         (`whisper-service`) automatically for video/audio assets with
-         an audio track, instead of waiting for the user to click
-         "Transcribe." Store result via existing transcript storage
-         (`useTranscriptStore` / whatever backs it persistently — verify
-         in Phase 0).
-      4. **Object detection** — NEW capability (see "Known architecture
-         facts" — no general object detector exists yet). Sample frames
-         at a reasonable interval (don't process every frame of a long
-         video), run through a chosen detector (YOLOv8/ONNX per the
-         user's stated preference — confirm licensing per AGENT.md open
-         question before committing), produce a list of
-         `{label, confidence, bbox, timestamp}` per asset. This is also
-         the foundation for Phase 11's auto-reframe.
-      5. **Scene description** — combine object detection output +
-         CLIP zero-shot tags (existing `clip-service`) + sampled
-         thumbnails, optionally pass through a vision-capable LLM (local
-         Kimi-VL via TurboQuant, or an OpenAI-compatible vision model per
-         Phase 9) to produce a natural-language description per detected
-         scene/cut (reuse client-side color-histogram cut points as scene
-         boundaries, per the existing AI Scene Detection feature — don't
-         recompute cut detection server-side if the client already has
-         it; figure out the right hand-off point).
-      6. **Sound/mood signal extraction** — lightweight audio analysis
-         (energy, tempo if music is present, speech vs. music vs.
-         silence ratio) feeding into Phase 10's auto sound-matching; can
-         reuse existing beat-detection/audio-analysis services mentioned
-         in the README rather than building new signal processing.
-- [ ] Each step writes its result to the Phase 7 persistence layer
-      keyed by asset ID, independently — a failure in object detection
-      shouldn't block the transcript from being saved, and the UI should
-      be able to show partial progress ("Transcript ready, analyzing
-      objects...").
-- [ ] Surface ingest status in the asset panel UI (small per-asset
-      progress indicator) so the user/agent both know what's ready.
-- [ ] Expose a unified `GET /api/assets/{id}/metadata` route returning
-      everything gathered above in one call, for the agent to consume
-      when building project context (ties into Phase 3's context
-      injection).
-- [ ] Make every step here idempotent and re-runnable on demand (for
-      the `DESCRIBE_SCENES`-style manual re-trigger mentioned in 4c, and
-      for re-running after a destructive edit changes what's in a clip).
+## Phase 12 — Close the action-executor stubs (HIGHEST PRIORITY, blocks everything else's value)
 
-## Phase 7 — Persistence guarantees (new)
+Goal: every action the Co-Pilot can plan, it can actually run. This is prioritized above new
+features deliberately — an agent that plans well but executes a `console.warn` is not "maximal"
+no matter what's added on top.
 
-Goal: project state — including all Phase 6 derived metadata — survives
-restarts, isn't silently lost, and is the system of record (not a cache
-that can desync from what's actually on disk/OPFS).
+- [ ] For each action confirmed still-stubbed in Phase 0's re-verification, implement against
+      real timeline/backend APIs:
+  - [ ] `TRIM_CLIP` — timeline trim API on the matching element.
+  - [ ] `ADD_TRANSITION` — timeline transition-insert API; verify against the 20 documented
+        transitions.
+  - [ ] `ADD_SUBTITLE_TRACK` — `aiClient.generateSubtitles` + insert cues onto a new track;
+        confirm this calls `subtitle_service.py`, doesn't reimplement SRT/VTT formatting.
+  - [ ] `ADD_IMAGE_OVERLAY` — `aiClient.generateImage` → insert as image element (mirror
+        `ADD_TEXT_OVERLAY` pattern for track lookup/insert).
+  - [ ] `ADD_VOICEOVER` — `aiClient.generateSpeech`/`generateSpeechBlob` → insert as audio.
+  - [ ] `DENOISE_AUDIO` — backend `audio_service` denoise endpoint → replace/insert result.
+  - [ ] `GENERATE_IMAGE` — generation only, asset-panel insert (no auto-placement) — confirm
+        intent against `previewAction` wording.
+  - [ ] `ADD_MUSIC` — call existing AI Music Generation backend route, insert onto audio track.
+  - [ ] `NORMALIZE_AUDIO` — call LUFS normalization backend endpoint.
+  - [ ] `AUTO_DUCK` — call auto-duck backend endpoint with duck amount/fade params.
+  - [ ] `COLOR_CORRECT` — apply one of the 8 documented profiles via existing effects/filter
+        system.
+  - [ ] `EXPORT_PROJECT` — call export route with format/quality params; keep
+        confirmation-gated (slow/resource-heavy, not "destructive" in the data-loss sense, but
+        still needs explicit go-ahead).
+- [ ] For any action NOT in the original v1 stub list but discovered stubbed during Phase 0
+      re-verification, add it to this checklist before closing this phase — don't let newly
+      discovered stubs slip through unaddressed.
+- [ ] Every implementation here gets a minimal manual test (or automated, if a test harness
+      exists) demonstrating it actually changes the timeline/project state, not just that it
+      doesn't throw.
 
-- [ ] Audit current persistence: confirm exactly what's in Postgres
-      today (`apps/web/migrations/`) vs. what's only in OPFS/browser
-      storage vs. what's only ever in-memory (e.g. confirm whether
-      `useTranscriptStore`/`useBackgroundTasksStore` persist anywhere or
-      reset on reload — check Zustand store configs for `persist`
-      middleware usage).
-- [ ] Design schema additions for Phase 6 metadata: per-asset tables for
-      transcript, detected objects, scene descriptions, EXIF/metadata,
-      ingest job status — linked to existing asset/project IDs, added via
-      the existing migrations mechanism (confirm Drizzle vs. raw SQL vs.
-      other in Phase 0).
-- [ ] Decide and document storage split: structured queryable fields
-      (object labels, timestamps, EXIF key/values) → Postgres;
-      large blobs (full transcript text, thumbnail images) → either
-      inline if small enough or referenced by a stable path/URL into
-      existing generated/uploads storage (don't duplicate the OPFS-vs-
-      server-disk-vs-Postgres question per feature — pick one pattern
-      and apply it consistently across all of Phase 6's outputs).
-- [ ] Ensure project save/autosave paths (`save-manager.ts` per the core
-      managers list) include the new metadata, not just timeline/track
-      state — verify nothing about the existing save flow assumes a
-      fixed schema that would silently drop new fields.
-- [ ] Add a basic data-integrity check (e.g. on project load, verify
-      referenced asset files/metadata actually exist; surface a clear
-      "missing asset" state rather than crashing) — this becomes more
-      important once more derived state exists to get out of sync.
-- [ ] Test: create a project, let ingest pipeline run, restart the full
-      docker-compose stack (`docker compose down && docker compose up`),
-      reload the project, confirm transcript/objects/scene descriptions/
-      EXIF are all still present without re-running ingest.
+## Phase 13 — Unify the two action vocabularies
 
-## Phase 8 — OpenAI-compatible image generation (new)
+Goal: stop `EditorActionType` (Co-Pilot) and `command.py`'s vocabulary (`cut`, `trim`, `delete`,
+`add_text`, etc.) from drifting further apart.
 
-Goal: image generation (currently via local Stable Diffusion in
-`image-service`, per README) can also route through any OpenAI-
-compatible image endpoint (e.g. `gpt-image-1` via OpenAI, or other
-providers exposing `/images/generations`), same selection pattern as
-the Phase 2 LLM backend.
+- [ ] Document the current full mapping: which `command.py` verbs have no `EditorActionType`
+      equivalent and vice versa.
+- [ ] Decide (don't relitigate endlessly — pick one): either (a) deprecate `command.py`'s
+      vocabulary in favor of routing all single-shot natural language commands through the
+      Co-Pilot's action set with a lightweight "single action, no plan needed" fast path, or
+      (b) keep `command.py` for genuinely fast single-shot edits but implement it as a thin
+      adapter that maps onto `EditorActionType` under the hood, so there's one source of truth
+      for what an action *does*, even if there are two entry points for *invoking* it.
+      Recommendation: (b) — preserves the fast single-command UX while eliminating duplicate
+      execution logic.
+- [ ] Implement the chosen adapter/deprecation.
+- [ ] Add a regression check (manual or automated) confirming a sampled set of commands produce
+      identical timeline results whether invoked via `/api/llm/command` or the Co-Pilot path.
 
-- [ ] Reuse the shared OpenAI-compatible client helper from Phase 2
-      (per AGENT.md conventions) rather than writing a new HTTP client.
-- [ ] Add backend config: reuse `OPENAI_BASE_URL`/`OPENAI_API_KEY` from
-      Phase 2 for auth (same provider account typically covers both
-      chat and image endpoints), but allow an independent
-      `OPENAI_IMAGE_MODEL` setting since the right model differs from
-      the chat model.
-- [ ] Add backend selection logic mirroring `model_backend.py`'s pattern:
-      a small `image_backend.py` (or extend `diffusion_service.py`) that
-      routes to local Stable Diffusion vs. OpenAI-compatible based on
-      config, with fallback to local if the remote call fails and local
-      is available.
-- [ ] Update `generate.py`'s image route and `aiClient.generateImage`
-      response handling to be agnostic to which backend served the
-      request (consistent response shape already exists per
-      `ImageGenResult` — verify it doesn't assume SD-specific fields
-      like `seed` are always present, since some hosted APIs won't
-      return one).
-- [ ] Surface backend choice in Settings (similar UI treatment to
-      Phase 2's LLM backend selector).
+## Phase 14 — Granular observation tools for the agent
 
-## Phase 9 — OpenAI-compatible scene description / vision (new)
+Goal: the agent can inspect specific moments instead of reasoning only from ingest-time
+summaries.
 
-Goal: Phase 6's scene-description step (and any future vision-dependent
-feature) can use an OpenAI-compatible vision model (e.g. `gpt-4o`,
-`gpt-4o-mini`, or any vision-capable model behind an OpenAI-compatible
-endpoint) instead of requiring local Kimi-VL/TurboQuant.
+- [ ] `GET_FRAME_AT(assetId, timestamp)` — server-side frame extraction (reuse the proxy/
+      thumbnail generation pipeline's frame-sampling code, don't write a second extractor),
+      returned as an image content part for vision-capable backends (reuses Phase 9's v1
+      OpenAI-compatible vision wiring, or local Kimi-VL).
+- [ ] `GET_TRANSCRIPT_RANGE(assetId, startMs, endMs)` — read from the existing persisted
+      transcript store (Postgres-backed per v1 Phase 7), word-level if available.
+- [ ] `GET_CLIP_NEIGHBORS(clipId)` — returns the clips immediately before/after on the same
+      track, with their key metadata (duration, detected objects, scene description summary).
+- [ ] Add all three to the agent loop's tool registry (`agent-loop.ts`) alongside the existing
+      `LIST_MEDIA`/`GET_MEDIA_METADATA`/`GET_TIMELINE_STATE` tools, following the same calling
+      convention.
+- [ ] Update the system prompt to explain when the agent should reach for these vs. relying on
+      ingest-time summary context — e.g. "use `GET_FRAME_AT` when the user references a specific
+      visual moment you don't have a pre-computed description for."
+- [ ] Cap usage sensibly (e.g. don't let the agent sample more than N frames per plan without
+      good reason) to control latency/cost — mirror the frame-sampling economy principle from
+      v1 Phase 9 (vision calls sampled at scene-cut boundaries, not every frame).
 
-- [ ] Confirm which OpenAI-compatible providers the user actually has
-      vision access to — don't assume every configured provider/model
-      supports image input; add a capability flag (config setting or
-      a runtime probe) rather than assuming.
-- [ ] Extend the shared OpenAI-compatible client helper (Phase 2/8) to
-      support multipart/image content parts in chat messages per the
-      OpenAI vision API shape (`image_url` content blocks, base64 or
-      hosted URL).
-- [ ] Wire Phase 6 step 5 (scene description) to pick: OpenAI-compatible
-      vision (if configured and capable) → local Kimi-VL via TurboQuant
-      (if available) → CLIP-tags-only text description with no LLM
-      (graceful degraded fallback, always available) — in that priority
-      order, mirroring the Phase 2 fallback pattern.
-- [ ] Make sure frame sampling for vision calls is economical — don't
-      send every frame of a long video to a paid vision API; sample at
-      scene-cut boundaries only (ties back to Phase 6 step 5's reuse of
-      client-side cut detection).
+## Phase 15 — Batch operation primitive
 
-## Phase 10 — Auto sound/music selection via Freesound or alternatives (new)
+Goal: "clean up the whole video" goals don't require N separate confirmations for N clips.
 
-Goal: the agent can pick and insert appropriate background music/SFX
-automatically based on content (mood, energy, transcript sentiment),
-rather than requiring the user to manually search and choose.
+- [ ] Define a new action shape: `BATCH_ACTION { matchCriteria, action, params }` where
+      `matchCriteria` can reference output from a query tool (e.g. all segments returned by
+      `silence_service.detect_silences`, or all clips tagged with a given object label).
+- [ ] Executor behavior: resolve `matchCriteria` to a concrete list of targets, then — if the
+      underlying `action` is destructive — show the **full resolved list** (not just a count) in
+      a single confirmation step before executing any of them. Non-destructive batch actions
+      auto-execute as today.
+- [ ] Allow the user to deselect individual items from the resolved list before confirming
+      (UI checkbox list in the plan step), not just accept/reject the whole batch.
+- [ ] Apply this first to the two most common batch goals: "remove all filler words/silences in
+      the video" and "apply transition X to every cut" — use these as the first real test cases
+      before generalizing further.
+- [ ] Update the system prompt to prefer `BATCH_ACTION` over emitting N individual steps when a
+      goal is naturally a "do this everywhere" request.
 
-- [ ] Reuse existing Freesound integration
-      (`FREESOUND_CLIENT_ID`/`FREESOUND_API_KEY`, search/preview/download
-      flow already in the app per README's Sounds panel) as the primary
-      backend — call it programmatically from a new agent tool rather
-      than reimplementing search/auth.
-- [ ] Define the "alternative" path explicitly rather than leaving it
-      vague: the existing local **AI Music Generation** feature (15
-      genres/12 moods/3 tempos, per README) is the natural fallback when
-      Freesound has no API key configured or returns no good match —
-      confirm with the user whether that's the intended "other
-      alternative" or whether a second external sound-library API
-      (e.g. Pixabay Audio, Epidemic Sound API if they have access) is
-      wanted instead. Don't build a second integration speculatively.
-- [ ] New agent tool: given project context (transcript sentiment/
-      energy from Phase 6 step 6, scene mood from Phase 6 step 5, target
-      duration), produce a Freesound search query (genre/mood/tempo
-      keywords) or, if generating, the existing `ADD_MUSIC` params —
-      then auto-select the best result by some simple scoring (license
-      compatibility — prefer CC0/CC-BY — duration fit, rating) rather
-      than always taking the first hit.
-- [ ] Surface the auto-selected track's license/attribution requirement
-      to the user if it requires attribution (CC-BY) — don't silently
-      insert audio with an attribution obligation the user doesn't know
-      about; this is a real legal-exposure detail, not optional polish.
-- [ ] New action type `AUTO_SELECT_SOUND` (non-destructive — adds to a
-      track, doesn't remove anything) in the Phase 3 action vocabulary.
+## Phase 16 — Template-aware planning
 
-## Phase 11 — Auto-reframe with object detection (new)
+Goal: goal-described requests can start from one of the 8 existing templates instead of building
+a timeline from zero.
 
-Goal: extend the existing face-only Smart Reframe (`face_reframe.py`,
-README's "Smart Reframe") to track and frame non-person subjects (pets,
-products, sports action, vehicles, etc.) using Phase 6's object
-detection output, not just faces.
+- [ ] New query tool `LIST_TEMPLATES` — returns the existing 8 templates with their metadata
+      (category, aspect ratio, typical use case) from the existing template gallery data source.
+- [ ] New action `APPLY_TEMPLATE(templateId)` — calls the existing one-click apply mechanism
+      already used by the manual Template Gallery UI; don't reimplement template application
+      logic, just expose the existing path as a callable agent action.
+- [ ] Update the system prompt: when a goal closely matches a template's stated use case (e.g.
+      "make this a TikTok vlog" → TikTok Vlog template), the agent should consider proposing
+      `APPLY_TEMPLATE` as the first plan step, then layering specific edits on top, rather than
+      always building from a blank timeline.
+- [ ] This is non-destructive only when applied to a new/empty project; if applied to a project
+      with existing timeline content, treat as destructive (it likely resets timeline structure)
+      and gate accordingly — verify actual template-apply behavior on a non-empty project before
+      deciding the gate, don't assume.
 
-- [ ] Depends on Phase 6 step 4 (object detection) existing first —
-      sequence this after Phase 6, not in parallel.
-- [ ] Extend `face_reframe.py`'s crop-trajectory logic (or add a sibling
-      `object_reframe.py` sharing the same `CropRegion`/trajectory
-      interpolation code — prefer extending/sharing over duplicating) to
-      accept a target subject that may be a face OR a detected object
-      class/instance.
-- [ ] Subject selection strategy: if the agent/user specifies a target
-      ("keep the dog centered", "follow the ball"), match against
-      detected object labels; if unspecified, default priority order:
-      person/face (existing behavior, don't regress) → largest/most
-      central high-confidence object → existing no-subject center-crop/
-      Ken-Burns fallback.
-- [ ] Handle the multi-subject case consistently with the existing
-      multi-face logic (bounding box union; pan between subjects if too
-      wide to fit one frame) — reuse that logic's shape rather than
-      inventing a different algorithm for objects vs. faces.
-- [ ] Keep the existing 4 aspect-ratio presets (9:16, 1:1, 4:5, 16:9)
-      and UI entry point (Settings → ... → Smart Reframe per README) —
-      this is an enhancement to an existing feature, not a new UI
-      surface, unless product wants a separate "object tracking" toggle
-      to distinguish from pure face mode (confirm with user if unsure).
-- [ ] New/extended action type: either extend the existing reframe
-      action with an optional `targetObjectLabel` param, or add
-      `AUTO_REFRAME` as a new explicit Co-Pilot action type per Phase
-      4b's note — pick one, don't have two competing entry points for
-      the same capability.
+## Phase 17 — Auto-translate + auto-dub pipeline
 
-## Phase 12 — Verification
+Goal: translate the transcript and generate a dubbed voiceover in the target language, as one
+agent-drivable pipeline. Composes existing transcription + LLM + TTS, no new core service.
 
-- [x] Type-check (`bun run typecheck` or equivalent) across `apps/web`.
-- [x] Python static checks (`ruff`/`mypy` if configured, else at least
-      `python -m py_compile` on touched files) across
-      `services/ai-backend` and any new service directories.
-- [x] If Docker is available: full `docker compose up`, manually drive:
-      - one full Co-Pilot goal end-to-end ("make this a 60s reel with
-        captions"),
-      - one auto-cleanup goal (silence/filler removal with confirmation
-        gating),
-      - uploading one GoPro and one iPhone sample clip, confirming
-        normalization + full ingest pipeline (transcript, objects, scene
-        description, EXIF) completes and persists,
-      - a full stack restart to confirm Phase 7 persistence,
-      - one auto-reframe run on a non-person subject,
-      - one auto sound-selection run, checking attribution surfacing.
-- [x] If Docker is not available: clearly state in the final report
-      which parts were only statically verified vs. actually executed.
-- [x] Update AGENT.md with anything learned that the next session needs
-      (new gotchas, anything that turned out different from what's
-      documented above) — in particular, replace Phase 5's speculative
-      GoPro/iPhone failure-mode list with verified findings, and record
-      the final object-detector and persistence-schema choices made.
+- [ ] New backend step: `translate_transcript(segments, targetLanguage)` — calls the existing
+      LLM backend (`model_backend.generate_json`) with a translation prompt per segment (or
+      batched, whichever proves more reliable for timing-faithful output), preserving segment
+      timing boundaries so the dub can be re-synced to the original cut points.
+- [ ] Decide and document: translate per-segment independently (faster, parallelizable, risk of
+      losing cross-segment context) vs. whole-transcript-then-resegment (better fluency, harder
+      to keep timing aligned). Recommend per-segment with surrounding-segment context included
+      in the prompt for continuity, re-evaluate if quality is poor in testing.
+- [ ] New backend step: for each translated segment, call existing TTS (Sarvam/Smallest/XTTS)
+      with the target language and either the cloned original voice (if voice cloning is
+      enabled/configured) or a default voice for that language.
+- [ ] Handle duration mismatch: translated speech rarely matches the original segment's exact
+      duration. Decide a strategy — time-stretch the generated audio within a tolerance band
+      (e.g. ±15%) before falling back to either trimming silence or accepting drift — document
+      the chosen tolerance and fallback in `AGENTS.md` once decided, since this is a real
+      product-quality tradeoff, not a pure implementation detail.
+- [ ] New action type `AUTO_DUB(targetLanguage, voiceMode)`. Default behavior: add as a new
+      alternate audio track (non-destructive, switchable) rather than replacing the original
+      track — per the confirmation-policy extension in `AGENTS.md` v2.
+- [ ] Surface translated captions alongside the dub (reuse existing subtitle track mechanism) —
+      don't generate audio-only dubs without the option to also burn in translated captions.
+- [ ] Test with at least 2 language pairs end-to-end (e.g. English→Indonesian and
+      English→Japanese, given the project's existing multilingual context) before considering
+      this phase done.
+
+## Phase 18 — Auto-cut-to-beat
+
+Goal: generate cut points aligned to detected beats, as one agent action, reusing existing beat
+detection — not building new audio analysis.
+
+- [ ] Confirm exact output shape of existing beat detection (BPM, beat timestamps, beat
+      strength) before building on it — re-derive nothing that's already computed.
+- [ ] New backend/agent logic: given a target track's beat timestamps and the video clips
+      available on the timeline, generate a cut-point list that aligns clip boundaries to beats
+      within a configurable snap tolerance (e.g. snap to nearest beat within 80ms, otherwise
+      leave the cut where it is rather than forcing a bad snap).
+- [ ] New action type `AUTO_CUT_TO_BEAT(trackId, snapToleranceMs)`. This is destructive (it
+      moves/splits existing clip boundaries) → confirmation-gated, showing the proposed new cut
+      points relative to current ones before applying.
+- [ ] Provide a preview mode (show the beat grid + proposed cut points overlaid on the timeline
+      before committing) — reuse the existing beat-grid visualization toggle mentioned in the
+      README rather than building a new overlay.
+
+## Phase 19 — Cross-clip color match
+
+Goal: "make clip B match clip A's look" as an AI action, distinct from applying a static preset.
+
+- [ ] New backend step: sample color statistics (histogram, average color temperature/tint,
+      luminance distribution) from a reference clip (or a specific frame range within it).
+- [ ] New backend step: compute a correction (LUT-like transform or parameterized
+      adjustment — reuse whatever representation the existing 8 color-correction profiles
+      already use, don't invent a second color-transform representation) that shifts the target
+      clip's stats toward the reference's.
+- [ ] New action type `MATCH_COLOR(referenceClipId, targetClipId | targetClipIds[])`.
+      Non-destructive if applied as a new effect layer (consistent with how the existing preset
+      system applies corrections) → should auto-execute, no confirmation needed, matching the
+      precedent for `COLOR_CORRECT`.
+- [ ] Validate visually on at least one real multi-camera-source test case (e.g. two clips shot
+      on different devices with visibly different white balance) before considering this done —
+      a color match that "computes successfully" but looks wrong is not done.
+
+## Phase 20 — AI B-roll suggestion/insertion from transcript
+
+Goal: detect segments that are visually static/talking-head-heavy relative to their narrative
+content, and suggest or generate relevant cutaway B-roll.
+
+- [ ] New backend logic: identify candidate segments using existing signals already computed by
+      the ingest pipeline — low scene-cut frequency over a sustained duration + transcript
+      content available for that range (don't build new "boring-ness" detection from scratch;
+      compose: scene-description sameness + silence/energy + transcript topic).
+- [ ] For each candidate segment, derive a short content query from the transcript text in that
+      range (via the existing LLM backend) suitable for either (a) a stock/generated visual
+      search or (b) a prompt to the existing AI Video Generation Hub.
+- [ ] Decide source priority order and document it: existing AI Video Generation Hub (9 models/
+      5 providers, already integrated) as the primary path since no stock-footage library
+      integration exists yet (per `REVIEW.md`, that's a separate, lower-priority gap) →
+      generated B-roll is therefore the only available source in this phase; don't block this
+      phase on adding a stock library too.
+- [ ] New action type `SUGGEST_BROLL(segmentRange)` (non-destructive — proposes options, doesn't
+      auto-insert) and `INSERT_BROLL(segmentRange, selectedOption)` (non-destructive if inserted
+      as an overlay/cutaway track rather than replacing the talking-head footage; confirm this
+      is in fact how cutaways are conventionally inserted in this editor's track model before
+      assuming).
+- [ ] Surface generation cost/time estimate before generating, per the `requiresCostConfirmation`
+      pattern defined in `AGENTS.md` v2, since this calls metered video-gen APIs.
+
+## Phase 21 — Quick-win effects: reverse / loop / boomerang
+
+Goal: low-effort, frequently-used short-form effects, bundled together since they're all simple
+FFmpeg/WebGL operations on a single clip.
+
+- [ ] `REVERSE_CLIP` — FFmpeg `-vf reverse` (and `-af areverse` if audio should also reverse;
+      decide default — likely audio-off or also-reversed depending on UX expectation, confirm
+      with existing speed-ramp/freeze-frame UX conventions) applied to a duplicated clip, not
+      in-place (non-destructive).
+- [ ] `LOOP_CLIP(count | targetDuration)` — repeat a clip's content to fill a duration or N
+      repetitions; check whether this should be a render-time effect (cheaper) or an actual
+      timeline duplication (simpler to reason about, more storage) — prefer render-time if the
+      existing transform/effect pipeline supports duration-changing effects, else duplication.
+- [ ] `BOOMERANG_CLIP` — forward-then-reverse-then-loop-point composition of the above two
+      primitives; implement as a composition, don't write a third bespoke FFmpeg pipeline.
+- [ ] All three are non-destructive (operate on a copy/new derived clip) → auto-execute.
+- [ ] Add as new action types; wire into both the manual UI (a small effects menu addition, even
+      if minimal) and the agent action vocabulary, so the agent can invoke them when a user
+      says e.g. "make this a boomerang."
+
+## Phase 22 — Per-word animated caption presets
+
+Goal: extend existing subtitle styling (karaoke/pill/classic) with animated text presets common
+in CapCut (pop-in, bounce, typewriter reveal) at the per-word/per-character level.
+
+- [ ] Audit the existing subtitle rendering path (likely WebGL or canvas-based, given the
+      editor's existing transition/effect shader pattern) to confirm where per-word timing data
+      already exists (word-level Whisper timestamps are already captured per the ingest
+      pipeline) — this phase is adding animation curves on top of timing data that already
+      exists, not adding new timing extraction.
+- [ ] Implement 2–3 initial presets (pop-in scale+fade, typewriter reveal, simple bounce) as
+      keyframe-generating functions that take per-word start/end times and emit the same kind of
+      transform keyframes the existing speed-ramp/motion-tracking systems already use — reuse
+      that keyframe representation, don't add a parallel animation system.
+- [ ] Add preset selection to the existing subtitle styling UI (alongside karaoke/pill/classic)
+      and to the `ADD_SUBTITLE_TRACK` action's params so the agent can select a preset based on
+      content tone (e.g. energetic content → bounce, tutorial → typewriter) if asked, or default
+      to the existing static style if the user doesn't specify.
+
+## Phase 23 — AI background removal without a green screen
+
+Goal: add real subject/background segmentation (matting), the one gap in this plan that requires
+genuinely new model infrastructure rather than recombination. Sequenced last among feature work
+deliberately — confirm Phases 12–22 land first since several reuse patterns (new microservice
+shape, non-destructive-by-default convention) are easier to follow once established elsewhere.
+
+- [ ] Research model options before committing (don't default to the first name that comes to
+      mind): video matting models suited to running without a GPU-heavy footprint, given this
+      project's stated CPU-friendly self-hosting goals — e.g. lightweight RVM (Robust Video
+      Matting) or MODNet-class models; check license terms (must be compatible with this
+      project's MIT license and self-hosting story — avoid anything with a non-commercial-only
+      license) and real-world CPU inference speed before choosing. Document the choice and why
+      in `AGENTS.md` once decided.
+- [ ] New microservice (e.g. `matting-service`) following the existing per-service Dockerfile +
+      `requirements.txt`/`requirements.lock` (`uv pip compile --universal`) pattern — model this
+      on `face-service`'s structure as the closest existing analog (small, focused CV model
+      service), including platform-pinning if the chosen model lacks aarch64 Linux wheels.
+- [ ] New backend route (e.g. `POST /api/video/remove-background`) accepting a clip reference
+      and optional output mode (transparent/alpha output for compositing vs. flat replacement
+      background color/image/video).
+- [ ] Output as a new derived asset (matted version) rather than overwriting the original —
+      non-destructive by default, consistent with every other derived-asset pattern in this
+      project (GoPro normalization, proxy generation).
+- [ ] New action type `REMOVE_BACKGROUND(clipId, replacementMode, replacement?)`.
+      Non-destructive (produces a new layer/asset) → auto-execute, matching the pattern for
+      other generation-style actions, though flag with `requiresCostConfirmation`-equivalent
+      compute-time warning if running on CPU is expected to be slow for the clip's duration (this
+      is genuinely the most compute-heavy new feature in this plan; be honest about expected
+      runtime in the UI rather than letting it silently hang).
+- [ ] Add a resource-cost note to the README's existing "What Uses Resources" / "Self-Hosting
+      Costs" tables once real benchmark numbers exist from testing — don't guess at numbers in
+      the README ahead of actually measuring on representative hardware.
+- [ ] Test against at least 3 real clips with varied complexity (clean single subject,
+      multi-person, fast motion) before considering this done — matting quality varies a lot by
+      scene complexity and this needs honest verification, not a single happy-path test.
+
+---
+
+## Phase 24 — Verification (this round)
+
+- [ ] Type-check (`bun run typecheck` or equivalent) across `apps/web`.
+- [ ] Python static checks (`ruff`/`mypy`, else `python -m py_compile`) across
+      `services/ai-backend` and any new service directories (notably `matting-service`).
+- [ ] If Docker available, drive end-to-end through:
+  - [ ] One full Co-Pilot goal that exercises a previously-stubbed action (Phase 12) to confirm
+        it's no longer a no-op.
+  - [ ] One command invoked via both `command.py`'s path and the Co-Pilot path post-unification
+        (Phase 13), confirming identical timeline results.
+  - [ ] One `GET_FRAME_AT`-driven reasoning step (Phase 14) — a goal that requires the agent to
+        inspect a specific visual moment it couldn't have answered from ingest-time summaries
+        alone.
+  - [ ] One batch operation (Phase 15) with at least 5 matched segments, confirming the single
+        confirmation step shows the full list and individual deselection works.
+  - [ ] One template-started goal (Phase 16).
+  - [ ] One full auto-dub run in at least one non-English target language (Phase 17).
+  - [ ] One auto-cut-to-beat run (Phase 18) with visual confirmation the cuts land near beats.
+  - [ ] One cross-clip color match (Phase 19) with a visibly-mismatched source pair.
+  - [ ] One B-roll suggestion + insertion (Phase 20).
+  - [ ] One of each quick-win effect: reverse, loop, boomerang (Phase 21).
+  - [ ] One animated caption preset applied and rendered (Phase 22).
+  - [ ] One background removal run (Phase 23), including a rough timing measurement on CPU.
+  - [ ] A full stack restart, confirming all new derived assets/metadata persist (extends v1
+        Phase 7's persistence guarantee to every new artifact type introduced this round).
+- [ ] If Docker is not available: clearly state which parts were only statically verified vs.
+      actually executed — do not claim end-to-end verification that didn't happen.
+- [ ] Update `AGENTS.md` with anything learned this round: actual stub-closure findings from
+      Phase 0, the vocabulary-unification decision made in Phase 13, the matting model chosen in
+      Phase 23 and why, and the duration-mismatch strategy decided in Phase 17.
+- [ ] Update `README.md`'s feature list and competitor comparison table to reflect genuinely
+      shipped capabilities from this round — don't list anything here that didn't pass its own
+      phase's test criteria above.
 
 ## Explicit non-goals for this pass
-- Not rewriting the existing `command.py` single-shot natural-language
-  command path unless Phase 3 decides to deprecate it.
-- Not touching the version-control/scenes-manager/merge-engine system
-  (`core/managers/scenes-manager.ts` etc.) — unrelated to "scene
-  detection" despite the name collision; do not conflate.
-- Not adding new third-party video-gen providers beyond what's already
-  listed (Runway/Pika/Kling/etc. via Replicate, Seedance, Stability,
-  Luma) — out of scope.
-- Not building a second external sound-library integration unless the
-  user explicitly confirms Freesound + local music generation isn't
-  sufficient (see Phase 10 note).
-- Not supporting camera formats beyond GoPro/iPhone in this pass (e.g.
-  DJI drones, other action cams) — extend later if needed, don't
-  generalize prematurely.
+
+- Not building a stock media (video/photo/sticker) library integration — this is a real CapCut
+  gap per `REVIEW.md` but requires a licensing/sourcing decision (e.g. Pexels/Pixabay API) that's
+  a product decision, not just an engineering one. Revisit in a future round once that decision
+  is made.
+- Not building a large sticker/animated-overlay asset library — same reasoning, asset curation
+  problem, not an AI-agent problem.
+- Not building real-time multi-user collaboration — contradicts this project's self-hosted/
+  single-operator privacy positioning; not a gap worth closing.
+- Not building a mobile companion app — out of scope for this repo's stack and goals.
+- Not adding profanity detection/auto-bleep — flagged in `REVIEW.md` as a gap but is a content-
+  moderation feature with different risk/scope considerations than the editing-capability gaps
+  prioritized here; revisit separately if there's real demand.
+- Not adding dual-language simultaneous subtitle rendering — smaller-impact gap, revisit after
+  Phase 22's animation work lands, since it touches the same rendering path and is easier to add
+  once that's been refactored for per-word presets anyway.
+- Not adding voice-changer (real-time pitch/formant effects) — distinct from voice cloning/TTS
+  already supported; lower priority than the items above per `REVIEW.md`'s effort/impact sort.
