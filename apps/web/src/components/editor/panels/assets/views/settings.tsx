@@ -230,7 +230,7 @@ function ProxyEditingSection() {
 	const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
 	const [progressMap, setProgressMap] = useState<Record<string, number>>({});
 
-	const proxyEnabled = activeProject.settings.proxyEditing ?? false;
+	const proxyEnabled = activeProject.settings.proxyEditing ?? true;
 	const proxyResolution = activeProject.settings.proxyResolution ?? "720p";
 
 	const highResAssets = mediaAssets.filter(
