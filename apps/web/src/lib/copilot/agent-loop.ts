@@ -109,9 +109,9 @@ async function executeTool(tool: string, params: any, editor: any): Promise<stri
 			const res = await searchStickers({ query, category: "all", limit: 10 });
 			const results = res.items.map(s => ({
 				id: s.id,
-				title: s.title,
-				url: s.url,
-				thumbnailUrl: s.thumbnailUrl
+				provider: s.provider,
+				name: s.name,
+				previewUrl: s.previewUrl
 			}));
 			return JSON.stringify(results, null, 2);
 		} catch (e: any) {
