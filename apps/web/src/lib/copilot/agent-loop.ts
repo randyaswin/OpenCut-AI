@@ -38,14 +38,12 @@ async function executeTool(tool: string, params: any, editor: any): Promise<stri
 		const effects = getAllEffects().map(e => ({
 			type: e.type,
 			name: e.name,
-			params: e.params?.map(p => ({
-				name: p.name,
-				type: p.type,
-				min: p.min,
-				max: p.max,
-				defaultValue: p.defaultValue,
-				options: p.options
-			})) || []
+			params: e.params?.map(p => {
+				const base = { key: p.key, label: p.label, type: p.type, defaultValue: p.default };
+				if (p.type === "number") return { ...base, min: p.min, max: p.max, step: p.step };
+				if (p.type === "select") return { ...base, options: p.options };
+				return base;
+			}) || []
 		}));
 		
 		const capabilities = {
