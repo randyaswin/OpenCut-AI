@@ -3,7 +3,8 @@ import { useTranscriptStore } from "@/stores/transcript-store";
 import type { CopilotPlan, CopilotStep, CopilotStepStatus } from "./copilot-types";
 import { isDestructiveAction } from "@/lib/ai-action-executor";
 import { getAllEmbeddings } from "@/services/search/embedding-store";
-
+import { getAllTransitions } from "@/lib/transitions/registry";
+import { getAllEffects } from "@/lib/effects/registry";
 export interface AgentLoopOptions {
 	goal: string;
 	systemPrompt: string;
@@ -28,6 +29,41 @@ function dotProduct(a: Float32Array, b: Float32Array): number {
 }
 
 async function executeTool(tool: string, params: any, editor: any): Promise<string> {
+	if (tool === "GET_SYSTEM_CAPABILITIES") {
+		const transitions = getAllTransitions().map(t => ({
+			type: t.type,
+			name: t.name,
+			defaultDuration: t.defaultDuration
+		}));
+		const effects = getAllEffects().map(e => ({
+			type: e.type,
+			name: e.name,
+			params: e.params?.map(p => ({
+				name: p.name,
+				type: p.type,
+				min: p.min,
+				max: p.max,
+				defaultValue: p.defaultValue,
+				options: p.options
+			})) || []
+		}));
+		
+		const capabilities = {
+			transitions,
+			effects,
+			supportedLanguages: ["en", "es", "fr", "de", "it", "ja", "ko", "zh"],
+			colorAdjustRanges: {
+				brightness: { min: -1, max: 1 },
+				contrast: { min: 0, max: 2 },
+				saturation: { min: 0, max: 2 },
+				temperature: { min: -1, max: 1 },
+				exposure: { min: -1, max: 1 },
+				hue: { min: -180, max: 180 }
+			}
+		};
+		return JSON.stringify(capabilities, null, 2);
+	}
+
 	if (tool === "LIST_MEDIA") {
 		const assets = editor.media.getAssets().map((a: any) => ({
 			id: a.id,

@@ -11,16 +11,39 @@ function getEditorCore() {
 	return EditorCore.getInstance();
 }
 
-export function isDestructiveAction(type: EditorActionType): boolean {
-	const destructiveTypes: EditorActionType[] = [
+export function isDestructiveAction(actionType: EditorActionType): boolean {
+	return [
 		"REMOVE_SEGMENTS",
-		"REMOVE_FILLERS",
 		"REMOVE_SILENCE",
+		"REMOVE_FILLERS",
 		"TRIM_CLIP",
 		"SPLIT_CLIP",
-		"EXPORT_PROJECT"
-	];
-	return destructiveTypes.includes(type);
+		"EXPORT_PROJECT",
+	].includes(actionType);
+}
+
+function isElementTargeted(el: any, action: any, store: any): boolean {
+	const clipIds = action.params.clipIds as string[] | undefined;
+	const segmentIds = action.params.segmentIds as number[] | undefined;
+	
+	if (clipIds && clipIds.length > 0) {
+		if (clipIds.includes(el.id)) return true;
+	}
+	
+	if (segmentIds && segmentIds.length > 0) {
+		const targetSegments = store.segments.filter((s: any) => segmentIds.includes(s.id));
+		const elEnd = el.startTime + el.duration;
+		for (const seg of targetSegments) {
+			if (seg.start < elEnd && seg.end > el.startTime) {
+				return true;
+			}
+		}
+		return false;
+	}
+	
+	if (!clipIds?.length && !segmentIds?.length) return true;
+	
+	return false;
 }
 
 export function previewAction(action: EditorAction): string {
@@ -402,14 +425,79 @@ export async function executeAction(action: EditorAction): Promise<void> {
 				const editor = getEditorCore();
 				const tracks = editor.timeline.getTracks();
 				const effectType = (action.params.effectType as string) ?? "filter";
+				const effectParams = action.params.effectParams as Record<string, any>;
 				for (const track of tracks) {
 					for (const el of track.elements) {
-						if (el.type === "video" || el.type === "image") {
-							editor.timeline.addClipEffect({
+						if ((el.type === "video" || el.type === "image") && isElementTargeted(el, action, store)) {
+							const effectId = editor.timeline.addClipEffect({
 								trackId: track.id,
 								elementId: el.id,
 								effectType: effectType,
 							});
+							if (effectId && effectParams) {
+								editor.timeline.updateEffectParams({
+									trackId: track.id,
+									elementId: el.id,
+									effectId: effectId,
+									params: effectParams
+								});
+							}
+						}
+					}
+				}
+			} catch (e) {
+				console.error(e);
+			}
+			break;
+		}
+
+		case "ADJUST_VISUALS": {
+			try {
+				const editor = getEditorCore();
+				const tracks = editor.timeline.getTracks();
+				const params = action.params as Record<string, any>;
+				for (const track of tracks) {
+					for (const el of track.elements) {
+						if ((el.type === "video" || el.type === "image") && isElementTargeted(el, action, store)) {
+							const colorAdjustParams: Record<string, number> = {};
+							if (typeof params.brightness === "number") colorAdjustParams.brightness = params.brightness;
+							if (typeof params.contrast === "number") colorAdjustParams.contrast = params.contrast;
+							if (typeof params.saturation === "number") colorAdjustParams.saturation = params.saturation;
+							if (typeof params.temperature === "number") colorAdjustParams.temperature = params.temperature;
+							if (typeof params.exposure === "number") colorAdjustParams.exposure = params.exposure;
+							if (typeof params.hue === "number") colorAdjustParams.hue = params.hue;
+							
+							if (Object.keys(colorAdjustParams).length > 0) {
+								const effectId = editor.timeline.addClipEffect({
+									trackId: track.id,
+									elementId: el.id,
+									effectType: "color_adjust",
+								});
+								if (effectId) {
+									editor.timeline.updateEffectParams({
+										trackId: track.id,
+										elementId: el.id,
+										effectId: effectId,
+										params: colorAdjustParams
+									});
+								}
+							}
+							
+							if (typeof params.vignette === "number") {
+								const effectId = editor.timeline.addClipEffect({
+									trackId: track.id,
+									elementId: el.id,
+									effectType: "vignette",
+								});
+								if (effectId) {
+									editor.timeline.updateEffectParams({
+										trackId: track.id,
+										elementId: el.id,
+										effectId: effectId,
+										params: { amount: params.vignette }
+									});
+								}
+							}
 						}
 					}
 				}
@@ -528,18 +616,22 @@ export async function executeAction(action: EditorAction): Promise<void> {
 			try {
 				const editor = getEditorCore();
 				const tracks = editor.timeline.getTracks();
+				const transitionType = (action.params.transitionType as string) || "crossfade";
+				const duration = (action.params.duration as number) || 1.0;
 				for (const track of tracks) {
 					for (let i = 0; i < track.elements.length - 1; i++) {
 						const el = track.elements[i];
 						const next = track.elements[i + 1];
-						if (Math.abs(el.startTime + el.duration - next.startTime) < 0.1) {
-							editor.timeline.updateElements({
-								updates: [{
-									trackId: track.id,
-									elementId: el.id,
-									updates: { transitionOut: { type: action.params.transitionType as string ?? "crossfade", duration: 1.0 } }
-								}]
-							});
+						if (isElementTargeted(el, action, store) || isElementTargeted(next, action, store)) {
+							if (Math.abs(el.startTime + el.duration - next.startTime) < 0.1) {
+								editor.timeline.updateElements({
+									updates: [{
+										trackId: track.id,
+										elementId: el.id,
+										updates: { transitionOut: { type: transitionType, duration } }
+									}]
+								});
+							}
 						}
 					}
 				}

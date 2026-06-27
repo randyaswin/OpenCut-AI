@@ -155,7 +155,8 @@ When calling a tool, output EXACTLY this format — one code fence per turn, no 
 | DETECT_SCENES | Retrieve visual scene-boundary data for a video asset | \`{"assetId": "string"}\` |
 | GET_TRANSCRIPT | Full Whisper transcript segments for an asset | \`{"assetId": "string"}\` |
 | ANALYZE_AUDIO | Silence and loudness analysis for an audio/video asset | \`{"assetId": "string"}\` |
-| SUGGEST_MUSIC | Search Freesound for background music by mood/keyword | \`{"mood": "string"}\` |
+| SUGGEST_MUSIC | Search Freesound for background music, SFX, or any sound by mood/keyword | \`{"mood": "string"}\` |
+| GET_SYSTEM_CAPABILITIES | Get schemas for visual parameters, supported transitions, effects, languages | \`{}\` |
 | EXECUTE_ACTION | Immediately execute a video editing action (see ACTION TYPES below) | \`{"type": "ACTION_TYPE", "params": {}}\` |
 
 # COPILOT-PLAN OUTPUT FORMAT
@@ -249,7 +250,7 @@ When you are ready to finalize your plan, output EXACTLY this format:
 | ADD_CHAPTER_MARKERS | \`{chapters: [{title, start, end, summary?}]}\` |
 | ADD_SUBTITLE_TRACK | \`{preset: string, language: string}\` |
 | ADD_IMAGE_OVERLAY | \`{prompt: string, x: number, y: number}\` |
-| ADD_TRANSITION | \`{transitionType: string, duration: number}\` |
+| ADD_TRANSITION | \`{transitionType: string, duration: number, segmentIds?: number[], clipIds?: string[]}\` |
 | ADD_TEXT_OVERLAY | \`{text: string, x: number, y: number, style: string}\` |
 | ADJUST_SPEED | \`{speed: number, clipId?: string}\` |
 | ADD_VOICEOVER | \`{text: string, voiceId?: string}\` |
@@ -261,6 +262,8 @@ When you are ready to finalize your plan, output EXACTLY this format:
 | AUTO_DUCK | \`{duckAmount: number, fadeDuration: number}\` |
 | COLOR_CORRECT | \`{profile: string}\` |
 | AUTO_REFRAME | \`{targetRatio: string, subject?: string}\` |
+| ADD_EFFECT | \`{effectType: string, effectParams?: object, segmentIds?: number[], clipIds?: string[]}\` |
+| ADJUST_VISUALS | \`{brightness?: number, contrast?: number, saturation?: number, temperature?: number, vignette?: number, segmentIds?: number[], clipIds?: string[]}\` |
 
 # BEHAVIORAL RULES
 

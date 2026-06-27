@@ -62,7 +62,8 @@ export type EditorActionType =
 	| "AUTO_REFRAME"
 	| "EXPORT_PROJECT"
 	| "ADD_EFFECT"
-	| "ADD_MEDIA_TO_TIMELINE";
+	| "ADD_MEDIA_TO_TIMELINE"
+	| "ADJUST_VISUALS";
 
 export interface EditorAction {
 	type: EditorActionType;
