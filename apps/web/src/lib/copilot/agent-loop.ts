@@ -296,7 +296,7 @@ async function executeTool(tool: string, params: any, editor: any): Promise<stri
 	if (tool === "SUGGEST_MUSIC") {
 		const mood = params?.mood || "ambient";
 		try {
-			const res = await fetch(`/api/sounds/search?q=${encodeURIComponent(mood)}&type=songs`);
+			const res = await fetch(`/api/sounds/search?q=${encodeURIComponent(mood)}&type=effects`);
 			if (res.ok) {
 				const raw = await res.json();
 				const results = raw.results || [];
