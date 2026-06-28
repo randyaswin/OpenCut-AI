@@ -56,6 +56,7 @@ export type EditorActionType =
 	| "GENERATE_IMAGE"
 	| "SET_CANVAS_SIZE"
 	| "ADD_MUSIC"
+	| "SELECT_MUSIC"
 	| "NORMALIZE_AUDIO"
 	| "AUTO_DUCK"
 	| "COLOR_CORRECT"
@@ -79,8 +80,14 @@ export type EditorActionType =
 
 export interface EditorAction {
 	type: EditorActionType;
-	params: Record<string, unknown>;
+	params: EditorActionParams;
 	description: string;
+}
+
+export interface EditorActionParams {
+	/** For ADD_MUSIC / SELECT_MUSIC */
+	[key: string]: any;
+	type?: EditorActionType;
 }
 
 export interface CommandResult {
@@ -293,6 +300,33 @@ export interface FaceDetectionResult {
 	duration: number;
 	total_faces_detected: number;
 }
+
+// Object detection (YOLO) for non-face auto-reframe subjects
+export interface ObjectBBox {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	confidence: number;
+	label: string;
+}
+
+export interface ObjectFrame {
+	timestamp: number;
+	objects: ObjectBBox[];
+}
+
+export interface ObjectDetectionResult {
+	frames: ObjectFrame[];
+	video_width: number;
+	video_height: number;
+	duration: number;
+	total_objects_detected: number;
+}
+
+// Union for reframe — supports both face and object detection
+// computeReframeKeyframes handles both via discriminated frames array
+export type DetectionResult = FaceDetectionResult | ObjectDetectionResult;
 
 // Emotion detection
 export interface EmotionSegment {
