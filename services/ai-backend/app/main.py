@@ -9,7 +9,30 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.routes import analyze, audio, command, engagement, export, factcheck, generate, ingest, llm, podcast, sarvam, search, setup, smallest, template, transcribe, transcribe_ws, tts, turboquant, video, youtube
+from app.routes import (
+    analyze,
+    audio,
+    command,
+    engagement,
+    export,
+    factcheck,
+    generate,
+    ingest,
+    llm,
+    mood_map,
+    podcast,
+    sarvam,
+    search,
+    setup,
+    smallest,
+    template,
+    transcribe,
+    transcribe_ws,
+    tts,
+    turboquant,
+    video,
+    youtube,
+)
 
 # Configure logging
 logging.basicConfig(
