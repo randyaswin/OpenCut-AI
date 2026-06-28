@@ -81,6 +81,7 @@ export interface EditorAction {
 	type: EditorActionType;
 	params: Record<string, unknown>;
 	description: string;
+	isDestructive?: boolean;
 }
 
 export interface CommandResult {
