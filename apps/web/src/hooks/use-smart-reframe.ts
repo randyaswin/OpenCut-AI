@@ -9,7 +9,7 @@ import {
 	computeReframeKeyframes,
 	getDefaultReframeOptions,
 } from "@/lib/reframe/reframe-types";
-import type { FaceDetectionResult } from "@/types/ai";
+import type { DetectionResult } from "@/types/ai";
 import type { NumberKeyframe } from "@/types/animation";
 import type { VideoElement } from "@/types/timeline";
 
@@ -24,7 +24,7 @@ export interface UseSmartReframeReturn {
 		elementId: string,
 		trackId: string,
 		preset: ReframePreset,
-		options?: Partial<ReframeOptions>,
+		options?: Partial<ReframeOptions> & { subject?: string },
 	) => Promise<void>;
 	applyKeyframes: () => void;
 	reset: () => void;
@@ -42,7 +42,7 @@ export function useSmartReframe(): UseSmartReframeReturn {
 			elementId: string,
 			trackId: string,
 			preset: ReframePreset,
-			options?: Partial<ReframeOptions>,
+			options?: Partial<ReframeOptions> & { subject?: string },
 		) => {
 			setStatus("detecting");
 			setProgress(0);
@@ -67,10 +67,11 @@ export function useSmartReframe(): UseSmartReframeReturn {
 
 				setProgress(10);
 
-				const detection: FaceDetectionResult = await aiClient.detectFaces(media.file, {
-					sampleInterval: 0.5,
-					maxSamples: 240,
-				});
+				const subject = options?.subject;
+				const isObjectSubject = subject && !["face", "person"].includes(subject.toLowerCase());
+				const detection: DetectionResult = isObjectSubject
+					? await aiClient.detectObjects(media.file, { sampleInterval: 0.5, maxSamples: 240, subject: subject! })
+					: await aiClient.detectFaces(media.file, { sampleInterval: 0.5, maxSamples: 240, subject });
 
 				setProgress(60);
 				setStatus("computing");
