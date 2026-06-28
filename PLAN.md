@@ -361,6 +361,129 @@ shape, non-destructive-by-default convention) are easier to follow once establis
 
 ---
 
+## Phase 25 — Binary rendering migration (preview/export parity)
+
+Goal: replace the current DOM/CSS-based preview renderer with a single binary rendering path
+shared by preview and export, eliminating the class of bugs where what the user sees in preview
+doesn't match what comes out of export — and improving preview performance/quality along the
+way (frame-accurate scrubbing, real effects in preview instead of CSS approximations, GPU-backed
+compositing instead of layout/paint).
+
+**Context that changes the shape of this phase**: the upstream project this repo is forked from
+(`OpenCut-app/OpenCut`) is doing exactly this migration right now, and has already landed real
+infrastructure for it — a `scene-builder.ts` (flat timeline → hierarchical `BaseNode` tree,
+track-ordered), a Rust/wgpu compositor compiled to WASM (`opencut-wasm`, exposed via
+`WasmCompositor` in `apps/web/src/services/renderer/compositor/wasm-compositor.ts`) that handles
+GPU-side effects (blur, color grading, masking) with texture caching and explicit GPU memory
+management, and a `SceneExporter` that drives that *same* compositor frame-by-frame for export,
+feeding frames into MediaBunny for muxing. Upstream's own contributor guidance currently asks
+contributors to **avoid** preview/export enhancement work because it's mid-migration to this
+binary approach. Given this, **do not design a parallel/independent binary renderer from
+scratch** — this phase is about determining how much of upstream's work already exists in this
+fork (it's a fork of `Ekaanth/OpenCut-AI`, which forked from `OpenCut-app/OpenCut` at some point
+in the past — the fork point matters a lot here) and either syncing/porting it in, or building
+the same shape of solution if the fork predates that work and a clean upstream merge isn't
+practical.
+
+- [ ] **Determine fork lineage and drift first** (this decides everything else in this phase):
+  - [ ] Identify which upstream commit/tag `Ekaanth/OpenCut-AI` (and therefore this fork) branched
+        from, and compare it against upstream's current `main` to see whether the
+        `scene-builder.ts` / `BaseNode` / `WasmCompositor` / `SceneExporter` files described above
+        exist anywhere in this fork's history (even if since modified or removed) or never
+        existed because the fork predates them.
+  - [ ] Check whether upstream is mid-*rewrite* (note: upstream's GitHub README mentions a
+        separate ground-up rewrite at `new.opencut.app` with a Rust-core/plugin architecture,
+        distinct from the classic version at `opencut-app/opencut-classic`) — confirm which
+        upstream lineage (classic vs. rewrite) is actually the one this fork descends from, since
+        the binary-rendering work described above belongs to the *classic* line per current
+        evidence, not the ground-up rewrite. Don't assume; verify against actual commit history.
+  - [ ] Based on the above, classify into one of two paths and proceed accordingly:
+    - **Path A (fork already has or can cleanly merge the upstream WASM compositor work)**:
+      proceed to the "Port/sync" track below.
+    - **Path B (fork has diverged too far — e.g. this fork's AI features touch the same files,
+      or the fork predates this work and a clean merge isn't realistic)**: proceed to the
+      "Build in place" track below, but follow the *same architecture shape* upstream already
+      validated (don't reinvent the node-tree/compositor split) rather than designing something
+      novel.
+  - [ ] Document the lineage finding and chosen path explicitly in `AGENTS.md` once determined —
+        this is a foundational fact the next agent session must not have to re-derive.
+
+- [ ] **Port/sync track (Path A)**:
+  - [ ] Pull in (via merge, cherry-pick, or manual port — choose based on how much this fork's
+        AI-specific code touches the same renderer files) upstream's `scene-builder.ts`,
+        `nodes/` (BaseNode, RootNode, and sibling node types), `compositor/` (WasmCompositor,
+        types), `resolve.ts`, `gpu-renderer.ts`, and `scene-exporter.ts`, plus the `rust/` crate
+        tree (`compositor`, `effects`, `masks`, `gpu`, `time`) and its WASM bindings.
+  - [ ] Reconcile this fork's AI-specific renderer touchpoints (anything Phase 4/12 of this plan
+        wired into export, e.g. `EXPORT_PROJECT`'s action implementation, or any AI feature that
+        currently manipulates the DOM-based preview directly — e.g. Smart Reframe preview,
+        Chroma Key preview, Speed ramping preview, Motion Tracking preview, per the README's
+        feature list) against the new node-tree model. Each of these needs to become a node type
+        or a property on an existing node type in the new system, not a DOM/CSS hack layered on
+        top of it.
+  - [ ] Verify the ported compositor builds and runs in this fork's Docker/build setup (it's a
+        Rust→WASM toolchain dependency that doesn't exist in this fork's current build pipeline —
+        confirm `wasm-pack`/`wasm-bindgen` or whatever upstream uses is added to build tooling,
+        CI, and Dockerfiles as needed).
+
+- [ ] **Build in place track (Path B)** — only if Path A is genuinely impractical:
+  - [ ] Build the same three-layer shape upstream validated: (1) a scene-graph builder that
+        converts the flat timeline model into a hierarchical node tree ordered by track/z-index;
+        (2) a GPU-backed compositor (WebGL2 is an acceptable first step if Rust/WASM/wgpu is too
+        large a lift for this fork's team/timeline — but design the interface so it can be
+        swapped for a WASM compositor later without touching the node tree or call sites); (3) an
+        exporter that walks the *same* node tree and drives the *same* compositor frame-by-frame,
+        differing from the live preview loop only in clock-driving (manual frame stepping vs.
+        real-time playback) and output sink (encoder vs. screen).
+  - [ ] Implement texture/resource caching analogous to upstream's `contentHash`-based skip logic
+        for redundant uploads, and explicit GPU resource release on node removal — these aren't
+        optional polish, they're why the current DOM approach's performance ceiling exists in the
+        first place; skipping them reproduces the same problem in a new technology.
+  - [ ] Re-implement each existing visual feature (the 20 transitions, 22 filter presets, 12
+        effects, masks, Smart Reframe, Chroma Key, Motion Tracking, speed ramping's visual
+        preview, multicam viewer) as compositor passes or node properties — treat this as a
+        checklist; nothing should regress silently. Cross-reference against the README's full
+        "Professional Editing" and "AI-Powered Editing" feature lists before considering this
+        track done.
+
+- [ ] **Regardless of path — integration points specific to this fork's AI features** (these
+  don't exist upstream and need explicit attention either way):
+  - [ ] `EXPORT_PROJECT` (Phase 12 of this plan) must call into the new exporter, not the old
+        DOM-based one, once this phase lands — coordinate sequencing with Phase 12 if both are
+        in flight; whichever lands second should be the one that does the wiring, recorded
+        explicitly in whichever phase finishes first so it isn't dropped.
+  - [ ] `GET_FRAME_AT` (Phase 14 of this plan, agent observation tool) should be implemented
+        against the new renderer's frame-stepping capability once available — a binary renderer
+        that can render an arbitrary timestamp on demand is a *better* foundation for this tool
+        than extracting frames from source video files directly, since it reflects the actual
+        composited result (with effects/transforms applied), not just the raw source. Sequence
+        Phase 14 to depend on this phase if both are scheduled together, or implement Phase 14
+        against raw source frames first and upgrade it once this phase lands — document which
+        was chosen.
+  - [ ] Smart Reframe, Auto-Reframe (Phase 10), and Motion Tracking all currently generate
+        transform/crop keyframes that something has to actually *render* — confirm the new
+        compositor's transform pipeline consumes these keyframes in the same shape the AI
+        features already produce them, or adjust the AI feature output format, but don't let
+        two incompatible keyframe shapes exist.
+
+- [ ] **Rollout strategy**: this is a large, risky migration touching the most user-visible part
+  of the editor. Land it behind a feature flag (consistent with how this fork's other risky
+  changes should be gated — check Phase 0/general conventions for the existing flag mechanism,
+  if any, or establish one) so preview can be toggled between old DOM rendering and new binary
+  rendering during development and early testing, rather than a single hard cutover.
+- [ ] Define explicit parity test criteria before declaring this phase done: for a fixed test
+  project exercising most visual features (transitions, filters, effects, masks, text, multiple
+  tracks, at least one AI-generated reframe), the exported video and a frame-by-frame capture of
+  the live preview at the same timestamps must be visually equivalent (allow for reasonable
+  compression artifacts in the export, but layout/effect/timing must match exactly). Automate
+  this comparison if feasible (pixel-diff against a tolerance), or document a clear manual
+  comparison procedure if not.
+- [ ] Performance check: measure preview frame time (or FPS during scrubbing/playback) before
+  and after, on both a CPU-only and a GPU-available test machine, for a moderately complex
+  project (multiple tracks, at least one active effect). The whole point of this migration is
+  performance and consistency — measure both, don't assume either improved just because the
+  architecture changed.
+
 ## Phase 24 — Verification (this round)
 
 - [ ] Type-check (`bun run typecheck` or equivalent) across `apps/web`.
@@ -384,18 +507,32 @@ shape, non-destructive-by-default convention) are easier to follow once establis
   - [ ] One of each quick-win effect: reverse, loop, boomerang (Phase 21).
   - [ ] One animated caption preset applied and rendered (Phase 22).
   - [ ] One background removal run (Phase 23), including a rough timing measurement on CPU.
+  - [ ] One binary-rendering parity check (Phase 25): export a test project and compare against
+        live preview captures at matching timestamps per Phase 25's defined parity criteria; run
+        the before/after preview performance measurement on at least one CPU-only and one
+        GPU-available machine.
   - [ ] A full stack restart, confirming all new derived assets/metadata persist (extends v1
         Phase 7's persistence guarantee to every new artifact type introduced this round).
 - [ ] If Docker is not available: clearly state which parts were only statically verified vs.
       actually executed — do not claim end-to-end verification that didn't happen.
 - [ ] Update `AGENTS.md` with anything learned this round: actual stub-closure findings from
       Phase 0, the vocabulary-unification decision made in Phase 13, the matting model chosen in
-      Phase 23 and why, and the duration-mismatch strategy decided in Phase 17.
+      Phase 23 and why, the duration-mismatch strategy decided in Phase 17, and — critically —
+      the fork-lineage finding and Path A/B decision from Phase 25, since that single fact
+      determines how much of this fork's future renderer work can keep tracking upstream vs.
+      must be maintained independently.
 - [ ] Update `README.md`'s feature list and competitor comparison table to reflect genuinely
       shipped capabilities from this round — don't list anything here that didn't pass its own
       phase's test criteria above.
 
 ## Explicit non-goals for this pass
+
+- Not adopting upstream's separate ground-up rewrite (Rust-core, plugin architecture, MCP server
+  for AI agents, headless mode — per upstream's own README) as a wholesale base for this fork.
+  That rewrite is a different, much larger undertaking than the binary-renderer work in Phase 25
+  and is not what was asked for here; revisit only if a future round explicitly decides this
+  fork should re-platform entirely, which is a major strategic decision outside this plan's
+  scope.
 
 - Not building a stock media (video/photo/sticker) library integration — this is a real CapCut
   gap per `REVIEW.md` but requires a licensing/sourcing decision (e.g. Pexels/Pixabay API) that's

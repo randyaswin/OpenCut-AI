@@ -98,6 +98,14 @@ Still open from v1 (carry forward into this plan's phases, renumbered below):
 9. (Carried from v1) Auto-select background music/SFX via Freesound, mood/energy-driven.
 10. (Carried from v1) Extend auto-reframe to non-person subjects using existing object
     detection output.
+11. **Migrate the preview renderer from DOM/CSS to a binary rendering pipeline shared with
+    export** (full detail in `PLAN.md` Phase 25). This is a separate axis from Goals 1–10 — it's
+    not an agent-intelligence improvement, it's a rendering-correctness and performance
+    improvement to the editor surface the agent's actions ultimately produce. Sequenced last
+    among the numbered goals because it's the largest, riskiest single change in this round and
+    several other goals (notably Goal 4's `GET_FRAME_AT` tool, and any goal whose action gets
+    verified via `EXPORT_PROJECT`) benefit from landing *after* this exists rather than before —
+    but don't block all other work on it; it can proceed in parallel if resourced separately.
 
 ## Confirmation policy (decided in v1, extended here — do not relitigate the base rule)
 
@@ -124,6 +132,27 @@ Extensions needed this round:
 
 ## Known architecture facts (carried from v1 — re-verify before trusting, don't re-derive)
 
+- **Preview rendering is currently DOM/CSS-based; export is a separate path** (per the user's own
+  framing of this round's renderer work) — this is the source of preview/export mismatch bugs
+  and the performance ceiling addressed in Goal 11 / `PLAN.md` Phase 25.
+- **Upstream (`OpenCut-app/OpenCut`) has already built real infrastructure for exactly this
+  migration**, per public documentation as of this writing: a `scene-builder.ts` that converts
+  the flat timeline into a track-ordered `BaseNode` tree, a Rust/wgpu compositor compiled to WASM
+  (`opencut-wasm`, wrapped by `WasmCompositor` in
+  `apps/web/src/services/renderer/compositor/wasm-compositor.ts`) handling GPU-side effects with
+  texture caching (`contentHash`-keyed skip logic) and explicit GPU memory release, and a
+  `SceneExporter` that drives that same compositor frame-by-frame for export, feeding MediaBunny.
+  Upstream's own contributor guidance currently asks contributors to avoid preview/export feature
+  work because of this in-flight migration. **This fork's relationship to that upstream work
+  (whether it predates it, has it, or has diverged from it) is unknown without checking commit
+  history — this is Phase 25's first and most important task, not an assumption to carry
+  forward.**
+- Separately, upstream also has an entirely distinct ground-up rewrite underway (Rust-core,
+  plugin architecture, MCP server, headless mode) at a different repo path
+  (`new.opencut.app`/rewrite branch) vs. the "classic" line. The binary-renderer work above
+  belongs to the classic line per current evidence. Do not conflate the two upstream efforts —
+  re-platforming onto the ground-up rewrite is explicitly a non-goal for this round (see
+  `PLAN.md`'s non-goals).
 - `services/ai-backend/app/services/model_backend.py` is the single chokepoint for all LLM
   calls (`generate`, `generate_stream`, `generate_json`, `chat`); already routes
   Ollama ⇄ TurboQuant ⇄ OpenAI-compatible (verify the third path is actually live, per v1 Phase 2).
