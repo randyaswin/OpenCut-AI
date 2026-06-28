@@ -327,6 +327,17 @@ async function executeTool(tool: string, params: any, editor: any): Promise<stri
 		}
 	}
 
+	if (tool === "SELECT_MUSIC") {
+		// Direct shortcut: agent can call SELECT_MUSIC without wrapping in EXECUTE_ACTION
+		try {
+			const { executeAction } = require("@/lib/ai-action-executor");
+			await executeAction({ type: "SELECT_MUSIC", params: params || {}, description: "Auto-select music" });
+			return `Successfully auto-selected music (mood: ${params?.mood || "neutral"}, energy: ${params?.energy || 5}).`;
+		} catch (err: any) {
+			return `Error selecting music: ${err.message || err}`;
+		}
+	}
+
 	return `Unknown tool: ${tool}`;
 }
 

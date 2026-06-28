@@ -155,7 +155,8 @@ When calling a tool, output EXACTLY this format — one code fence per turn, no 
 | DETECT_SCENES | Retrieve visual scene-boundary data for a video asset | \`{"assetId": "string"}\` |
 | GET_TRANSCRIPT | Full Whisper transcript segments for an asset | \`{"assetId": "string"}\` |
 | ANALYZE_AUDIO | Silence and loudness analysis for an audio/video asset | \`{"assetId": "string"}\` |
-| SUGGEST_MUSIC | Search Freesound for background music, SFX, or any sound by mood/keyword | \`{"mood": "string"}\` |
+| ADD_MUSIC | Add a specific background music track. | \`{query: string, duration: number}\` |
+| SELECT_MUSIC | Autopilot: auto-select background music by mood/energy. Scores Freesound results by BPM match, picks best. | \`{mood: string, energy: number, duration: number}\` |
 | GET_SYSTEM_CAPABILITIES | Get schemas for visual parameters, supported transitions, effects, languages | \`{}\` |
 | EXECUTE_ACTION | Immediately execute a video editing action (see ACTION TYPES below) | \`{"type": "ACTION_TYPE", "params": {}}\` |
 
