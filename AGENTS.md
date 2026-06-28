@@ -130,15 +130,12 @@ Extensions needed this round:
 - `apps/web/src/types/ai.ts` defines `EditorActionType`, used by `copilot-types.ts` and
   `use-copilot.ts`.
 - `apps/web/src/lib/ai-action-executor.ts` is where Co-Pilot actions execute client-side. **Per
-  the last audit, confirm current stub status before assuming any of the previously-listed
-  stubs (`NORMALIZE_AUDIO`, `AUTO_DUCK`, `COLOR_CORRECT`, `ADD_SUBTITLE_TRACK`,
-  `ADD_IMAGE_OVERLAY`, `TRIM_CLIP`, `ADD_TRANSITION`, `ADD_VOICEOVER`, `DENOISE_AUDIO`,
-  `GENERATE_IMAGE`, `ADD_MUSIC`, `EXPORT_PROJECT`) are actually wired now** — Goal 1 of this
-  round assumes some may still be open; verify file-by-file rather than trusting this note.
-- Second, separate action vocabulary lives in `services/ai-backend/app/routes/command.py`
-  (`cut`, `trim`, `delete`, `add_text`, etc.), used by `aiClient.executeCommand()` /
-  `/api/llm/command`. Per v1, this was never reconciled with `EditorActionType` — Goal 2 of this
-  round addresses it directly; don't let a third vocabulary spawn for new features.
+  the Phase 0 audit, all previously-listed stubs (NORMALIZE_AUDIO, AUTO_DUCK, COLOR_CORRECT, ADD_SUBTITLE_TRACK,
+  ADD_IMAGE_OVERLAY, TRIM_CLIP, ADD_TRANSITION, ADD_VOICEOVER, DENOISE_AUDIO, GENERATE_IMAGE, ADD_MUSIC,
+  EXPORT_PROJECT) are actually already fully implemented and wired.**
+- The previously separate action vocabulary in `services/ai-backend/app/routes/command.py`
+  (`cut`, `trim`, `delete`, `add_text`, etc.) **has been fully deprecated and reconciled**. `command.py`
+  now exclusively returns `EditorActionType` JSON matching the Co-Pilot actions, resolving Goal 2.
 - `silence_service.py`, `clip_detector.py`, `topic_detector.py`, `face_reframe.py`,
   `subtitle_service.py` are real, tested backend capabilities. Per v1 audit they were *still not
   wired in as agent tools* as of last check — re-verify, this is Goal 3.

@@ -21,6 +21,7 @@ export function isDestructiveAction(actionType: EditorActionType): boolean {
 		"TRIM_CLIP",
 		"SPLIT_CLIP",
 		"EXPORT_PROJECT",
+		"ADD_VOICEOVER",
 	].includes(actionType);
 }
 
