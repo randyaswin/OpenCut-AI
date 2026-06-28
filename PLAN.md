@@ -484,7 +484,359 @@ practical.
   performance and consistency — measure both, don't assume either improved just because the
   architecture changed.
 
-## Phase 24 — Verification (this round)
+## Phase 26 — Adopt Custom's MCP tool vocabulary and skill-loading system
+
+Goal: this fork's agent currently has a narrow, partially-stubbed action vocabulary (Phase 12)
+and no formal skill-loading system. A reference competitor product, Custom, exposes its editor to
+an AI agent via ~50 granular MCP tools plus a `loadSkill` mechanism that returns step-by-step
+guidance before multi-step workflows (captioning, masking, time-remapping, motion graphics,
+etc.). This phase ports that full tool vocabulary into this fork's agent action system, and
+introduces an equivalent skill-loading system — both adapted to this codebase's actual
+architecture, not copied verbatim where the underlying systems differ (e.g. this fork has no
+React/Remotion motion-graphics renderer yet; that has to be built, not just wired).
+
+This is a large phase. It's broken into sub-phases (26a–26h) so it can be checkpointed — land
+and verify each sub-phase before starting the next, rather than attempting all of it as one
+unreviewable change.
+
+### Reference material
+
+Two source documents define the target tool/skill shape exactly (verbatim tool descriptions,
+parameters, and skill associations) — read both in full before starting any sub-phase below:
+- `custom-mcp-tool-list-original.md` — ~50 tool definitions with exact parameters.
+- `custom-skills-reference-original.md` — skill-to-tool associations and the guidance each skill
+  is meant to return.
+
+Treat these as the *target shape* to adapt, not a spec to copy 1:1 — Custom's underlying engine,
+ID system (`agentId`/`agentIds`, e.g. `video_1_1`), and asset model differ from this fork's. Each
+sub-phase below calls out where adaptation (not verbatim porting) is required.
+
+### Foundational decisions before any tool work (do this first, in 26a)
+
+- [ ] **Decide this fork's `agentId` scheme.** Custom's IDs encode type + hierarchy (`video_1`,
+      `video_1_1` for a sub-clip, `vignette_1` for an effect instance, `motionGraphic_1`).
+      Determine whether this fork's existing timeline element IDs can be adapted to this scheme
+      or whether a mapping layer is needed (e.g. internal UUID ↔ stable human-readable agent ID
+      for agent-facing tool calls). This decision affects every tool below — get it right once,
+      don't let each tool invent its own ID convention.
+  - [ ] Document the chosen scheme in `AGENTS.md` once decided.
+- [ ] **Decide the skill storage mechanism**: a new directory of per-skill markdown files (e.g.
+      `services/ai-backend/app/skills/*.md`), loaded on demand by a new `loadSkill` tool/action,
+      mirroring Custom's pattern exactly — skills are NOT injected into the system prompt by
+      default; they're fetched only when the agent calls `loadSkill(skillName)` at the start of a
+      relevant multi-step workflow. This keeps the default system prompt lean and matches the
+      token-efficiency rationale behind Custom's own design (per `custom-skills-reference-
+      original.md`'s framing: skills carry "step-by-step guidance you MUST follow" loaded
+      on-demand, not always-on context).
+  - [x] **Skill content for all 13 skills is already written and provided** (`/skills/*.md` in
+        this plan's accompanying files: `captioning-text.md`, `masking.md`,
+        `masking-and-shapes-smart-masking.md`, `masking-and-shapes-shapes.md`,
+        `time-remapping.md`, `transitions.md`, `audio-sync.md`, `transcript-cleanup.md`,
+        `motion-graphics.md`, `long-form-edit.md`, `vlog.md`, `keyframing.md`,
+        `assembly-layouts.md`). These are written as final, agent-facing instructional content
+        (the actual prose `LOAD_SKILL` should return) — not a stub or outline to be expanded
+        later. **Action for this checklist item is now just placement and wiring**, not
+        authoring:
+    - [ ] Copy these files verbatim into the chosen storage location (e.g.
+          `services/ai-backend/app/skills/`), preserving filenames (map
+          `masking-and-shapes/smart-masking` and `masking-and-shapes/shapes` skill *names* to
+          the hyphenated filenames above, or rename the files to match whatever slash-containing
+          or nested-path skill-name convention the `LOAD_SKILL` tool ends up using — just keep
+          the name→file mapping consistent and documented).
+    - [ ] Each file references this fork's `EditorActionType`/Phase 26 action names directly
+          (e.g. `CREATE_MASK`, `WRITE_KEYFRAMES`) rather than Custom's camelCase tool names — verify
+          during Phase 26's later sub-phases that the action names actually implemented match
+          what these skill files reference; if a sub-phase ends up naming an action differently
+          than assumed here, update the corresponding skill file rather than leaving a mismatch.
+    - [ ] Skim each file once during implementation of its corresponding sub-phase (26c↔
+          captioning-text, 26e↔masking/smart-masking/shapes, 26f↔keyframing, 26g↔time-remapping/
+          transitions/audio-sync/transcript-cleanup, 26h↔motion-graphics, 26b↔long-form-edit,
+          long-form-edit+vlog↔vlog, 26b/new↔assembly-layouts) to confirm the guidance still
+          matches what was actually built — these were written against the *planned* tool shapes
+          in `custom-mcp-tool-list-original.md`/`custom-skills-reference-original.md`, adapted to
+          this fork's action names; if implementation deviated from the plan anywhere, the skill
+          file's specific claims (parameter names, units, limits) need a matching update, not
+          just the code.
+  - [x] **The `LOAD_SKILL` routing overview is also already written**
+        (`skills/_LOAD_SKILL_overview.md`, provided alongside the 13 skill files). This is
+        **categorically different from the 13 skill files** and must be handled differently:
+    - The 13 skill files are fetched **on demand only** — never part of default agent context.
+    - `_LOAD_SKILL_overview.md`'s content is the **opposite** — it must be part of the
+      `LOAD_SKILL` tool's own registered `description` field (which the agent always sees,
+      since tool descriptions are always in context) and/or referenced from the system prompt's
+      skill-routing instruction. Without this routing text being always-visible, the agent has
+      no way to know *which* `skillName` to pass to `LOAD_SKILL` without having already loaded
+      every skill to find out — defeating the entire token-efficiency point of the on-demand
+      design.
+    - [ ] Use `_LOAD_SKILL_overview.md`'s "Tool registration text" section verbatim as the
+          `LOAD_SKILL` tool's `description` field.
+    - [ ] Use its "Routing table" and "Multi-skill workflows" sections as the source for the
+          system prompt's skill-routing instruction (condense if the system prompt has tight
+          length constraints, but don't drop the multi-skill-workflow guidance — that's the part
+          most likely to prevent an agent from under-loading skills on compound requests).
+    - [ ] Keep this file in sync with the actual list of 13 skills if any are added/renamed
+          later — per that file's own "Maintenance note," letting the routing table and the
+          live tool description drift apart recreates the vocabulary-drift problem Phase 13
+          fixed elsewhere.
+  - [ ] New backend route or direct file-read (depending on where the agent loop runs) serving
+        skill content by name — simple file lookup, no need for a database table for this.
+  - [ ] New agent tool `LOAD_SKILL(skillName)` registered in the agent loop's tool registry
+        alongside the existing query tools, returning the skill file's content as the tool
+        result.
+  - [ ] Update the system prompt's skill-routing instruction per the checklist item above
+        (sourced from `_LOAD_SKILL_overview.md`, covering all 13 skills — including the 4
+        sub-skills `masking-and-shapes/smart-masking`, `masking-and-shapes/shapes`, `vlog`'s
+        auto-load of `long-form-edit`, and `assembly/layouts` — not just the 9 top-level skills
+        Custom's own `loadSkill` description names; this fork's overview deliberately surfaces all
+        13 explicitly rather than leaving sub-skills to be discovered only via other tools'
+        descriptions, since that indirection is easy for an agent to miss).
+- [ ] **Decide the granular-observation tool overlap with Phase 14.** Custom's `context`,
+      `viewItemDetails`, and `captureFrame` tools cover much of the same ground as this plan's
+      Phase 14 (`GET_FRAME_AT`, `GET_TRANSCRIPT_RANGE`, `GET_CLIP_NEIGHBORS`). Reconcile rather
+      than building two overlapping systems:
+  - [ ] If Phase 14 hasn't landed yet, supersede it with Custom's richer shape directly (skip
+        building the narrower Phase 14 tools, implement 26d below instead).
+      - [ ] If Phase 14 has already landed, decide whether to extend its existing tools to match
+        Custom's parameter shape (`include` categories, time-range scoping) or deprecate them in
+        favor of the new ones — don't maintain two parallel observation-tool sets.
+
+### 26b — Timeline assembly & manipulation tools
+
+Maps to Custom's `long-form-edit` and general timeline tools. Most of these extend or replace
+existing stubbed/partial actions from Phase 12 — check for overlap before adding a new action
+type where an existing one can be extended.
+
+- [ ] `ADD_MEDIA` — single-item and batch (max 30) placement, matching Custom's
+      `trackPlacement`/`insertAfter` mutual exclusivity and the "new track / above:trackId /
+      existing track" placement enum. Batch mode auto-chains items back-to-back on one track.
+- [ ] `SPLIT_ITEM` — single or multi-timestamp split (N+1 chunks for multiple timestamps).
+- [ ] `MOVE_ITEM` — absolute (`to`), relative (`by`), or snap-to-item (`before`/`after`)
+      positioning; separately, trim/duration resizing with optional `ripple`. Batch mode only for
+      relative (`by`) shifts, matching Custom's documented constraint — don't allow batch absolute
+      moves, that's an actual usability hazard (ambiguous semantics for "move N items to the same
+      absolute position").
+- [ ] `DELETE_ITEMS` — batch delete with optional `ripple` to close gaps.
+- [ ] `CLONE_ITEM` — duplicate with all properties/effects/masks/keyframes preserved, placed on a
+      new track above.
+- [ ] `CHANGE_TRACK` — move item to a different track (new or existing), preserving timeline
+      position.
+- [ ] `SLIP_ITEM` — shift the source trim window without changing position/duration.
+- [ ] `CONSOLIDATE_TRACKS` — Tetris-style track packing; explicitly exclude caption tracks from
+      consolidation (each caption pass owns its track for independent styling, per the skills
+      reference).
+- [ ] `TRANSFORM_ITEM` — position/scale/rotation/fit-to-canvas/fill-canvas/center, with the
+      text-only `alignTop`/`alignBottom` safe-area behavior. Keep this distinct from
+      `EDIT_PROPERTIES` (styling) per Custom's own explicit separation — don't let transform and
+      style properties collapse into one action's params, that's exactly the kind of vocabulary
+      sprawl Phase 13 is trying to eliminate elsewhere.
+- [ ] `EDIT_PROPERTIES` — single or batch styling edits, scoped per item type (video/image/text/
+      caption/audio/motionGraphic/shape) exactly as Custom documents per-type property lists. Don't
+      allow scale/position here — that's `TRANSFORM_ITEM`'s job, enforce the separation in
+      validation, not just documentation.
+- [ ] `RESIZE_CANVAS` — aspect ratio change (16:9/9:16/1:1) with the explicit non-auto-scale
+      behavior Custom documents (items keep original pixel dimensions; agent should ask the user
+      whether to refit everything if their intent implies it).
+
+### 26c — Captioning tools
+
+Maps to Custom's `captioning-text` skill. This fork already has subtitle generation (v1) and
+animated caption presets (Phase 22) — reconcile rather than duplicate.
+
+- [ ] `ADD_CAPTIONS` — extend existing subtitle generation to match Custom's parameter shape:
+      `source` (speech/music/all — music vs. speech-bearing item filtering), `sourceItems`
+      (explicit override), `splitBySpeaker` (per-speaker track + palette color, namespaced per
+      source asset), `sameTrack` (opt-in append to existing track, default false/new track per
+      call), plus the styling params (font/color/size/border/background) and `templateId` for
+      deterministic template application.
+- [ ] `LIST_CAPTION_TEMPLATES` — expose existing or new caption templates with IDs/names/
+      descriptions/tags/accent colors.
+- [ ] `EDIT_ALL_CAPTION_STYLES` — bulk-restyle every caption on a track without touching text/
+      timing; reuse for the per-speaker restyling flow `splitBySpeaker` sets up.
+- [ ] Wire `LOAD_SKILL("captioning-text")` guidance to cover template selection, word-level
+      timing, and multi-line wrapping — port Custom's skill content where it generalizes, adapt
+      where this fork's caption renderer (Phase 22's keyframe-based per-word presets) differs
+      from Custom's render-mode enum (default/highlight/word-by-word/slide-up/slide-left) —
+      reconcile the two render-mode vocabularies into one, following the Phase 13 unification
+      precedent (don't let captions become a second instance of the vocabulary-drift problem
+      Phase 13 was created to fix).
+
+### 26d — Granular observation & verification tools
+
+Supersedes or extends Phase 14 per the 26a decision. This is the single highest-value adoption
+from Custom's toolset — it directly closes the "agent is blind beyond ingest-time summaries" gap
+identified in `REVIEW.md`.
+
+- [ ] `CONTEXT(include, types, startSeconds, endSeconds)` — tiered timeline inspection: default
+      lightweight overview (tracks, IDs, timing, short labels); `content` (detailed per-type,
+      requires `types`); `transcript` (sentence-level); `transcript_words` (word-level, requires
+      time range — token-heavy, scope tightly); `effects`/`keyframes`/`masks` (animation/
+      compositing data, optionally time-scoped).
+- [ ] `VIEW_ITEM_DETAILS(agentId | agentIds, include)` — single or batch deep inspection,
+      including the `beats` category for music rhythm structure (BPM/tempo type by default;
+      `beatsFrom`/`beatsTo` for individual pulse/onset data, keep ranges narrow — 5–15s — since
+      onset data is token-heavy; single-`agentId`-only for beats, not batch).
+- [ ] `CAPTURE_FRAME(timestamps?, quality)` — render the live preview canvas at given timestamps
+      (or current playhead if omitted) and return actual images, for the agent to visually verify
+      its own output (color grades, text placement, effect results) rather than trusting its plan
+      executed correctly. **This is the agent self-checking capability flagged as a real gap and
+      differentiation opportunity in `REVIEW.md`** — implement it against whichever renderer is
+      live at the time (DOM-based today, or the binary renderer if Phase 25 has landed — note
+      Phase 25 already calls out that a binary renderer's on-demand frame-stepping is a *better*
+      foundation for exactly this kind of tool, so sequence accordingly if both are in flight).
+- [ ] `VIEW_PROJECT_ASSETS()` — list all project assets with summaries (filename, content type,
+      duration, resolution, recording date, analysis summary) — likely a thin wrapper over
+      existing ingest-pipeline-persisted metadata (Phase 7, v1) rather than new computation.
+
+### 26e — Masking & shape tools
+
+Maps to Custom's `masking`, `masking-and-shapes/smart-masking`, and `masking-and-shapes/shapes`
+skills. This is new capability for this fork — no equivalent exists today per the README's
+feature list (chroma key requires a physical green screen; there's no general path/shape mask
+system).
+
+- [ ] `CREATE_MASK(agentId, method, ...)` — three mutually exclusive methods: (1) `textPrompt` for
+      AI smart mask (SAM2-class model, clip-relative optional tracking window, max 30s of source
+      per call — speed ramps affect this budget), (2) `shape` + `bounds` for preset shapes
+      (rectangle/ellipse/triangle/pentagon/star/heart), (3) `points` for custom bezier path. Shape/
+      points methods require `timelineSeconds` for canvas-pixel-to-mask-space conversion.
+  - [ ] This requires a real segmentation model — reuse the model choice/sequencing decision from
+        Phase 23 (background removal) rather than evaluating a second matting/segmentation model
+        independently; if Phase 23's chosen model supports prompted/text-conditioned segmentation
+        (check SAM2 specifically, since Custom's own skill reference names it), this tool and
+        Phase 23's `REMOVE_BACKGROUND` can likely share inference infrastructure.
+- [ ] `WRITE_MASK_POINTS` — patch-style path editing: add/update/remove points, or keyframed path
+      morphing via `at`/`keyframeIndex` targeting, mutually exclusive `clearKeyframes`.
+- [ ] `REMOVE_MASK`, `EDIT_MASK_PROPERTIES` (feather/opacity/mode/expansion/inverted) — mode enum
+      add/subtract/intersect/difference.
+- [ ] `ADD_SHAPE` — preset shape + bounds, or custom bezier points; rectangle/ellipse/triangle/
+      pentagon/star/heart presets, fill/stroke/roundness styling.
+- [ ] `WRITE_SHAPE_POINTS` — same patch-style path editing pattern as masks; share the underlying
+      bezier-path-editing implementation between `WRITE_MASK_POINTS` and `WRITE_SHAPE_POINTS`
+      rather than writing it twice, since the parameter shapes are nearly identical.
+- [ ] Skill content for `masking` and `masking-and-shapes/smart-masking`: port the SAM2-limits,
+      scribble-prompt, and tracking-failure-recovery guidance from the reference doc, adapted to
+      whatever model is actually chosen in Phase 23/26e's shared-infrastructure decision above —
+      don't port Custom's specific model-limit numbers if a different model is chosen; re-derive
+      the real limits for the chosen model and document those instead.
+
+### 26f — Keyframing & effects tools
+
+Maps to Custom's `keyframing` skill plus its effects system (`writeEffects`, `listEffects`,
+`getEffectDetails`). This generalizes and formalizes what Phase 19 (color match) and various
+existing effects (filters, transitions) currently do ad hoc.
+
+- [ ] `WRITE_KEYFRAMES(agentId, payload, effectId?, maskIndex?)` — one tool covering item-property,
+      effect-parameter, and mask-property keyframes, with per-property `add`/`update`/`remove`/
+      `replace` operations. Animatable item properties: opacity, scale, rotation, positionX/Y,
+      width, height, blur, brightness, borderRadius, borderWidth, volume, fillOpacity,
+      strokeWidth, strokeOpacity. **Critical gotcha to preserve from the skill reference: scale is
+      0–100, not 0–1** — this exact kind of unit mismatch is the sort of thing that silently
+      breaks agent-generated animations, call it out explicitly in this fork's own keyframing
+      skill file, not just in code comments.
+  - [ ] Easing presets: linear, easeIn/Out/InOut, easeIn/Out/InOutQuad, easeIn/Out/InOutCubic,
+        easeIn/Out/InOutBack, easeOutElastic, easeOutBounce, plus custom cubic-bezier handles
+        (`inHandle`/`outHandle`, segment-normalized per Custom's exact convention — reuse the same
+        normalization so the easing math is one shared implementation, not three near-identical
+        ones across keyframes/mask-points/shape-points).
+- [ ] `WRITE_EFFECTS(agentId, add?, effects?)` — patch-style: `add` instantiates new effects
+      (appended to stack), `effects` (keyed by effect instance ID) edits params/enabled/removes.
+      Reconcile with this fork's existing 12 effects/22 filter presets/20 transitions (per
+      README) — these become the effect catalog `LIST_EFFECTS`/`GET_EFFECT_DETAILS` serve, not a
+      parallel system.
+- [ ] `LIST_EFFECTS(itemType?)`, `GET_EFFECT_DETAILS(effectName | effectNames)` — discovery tools
+      so the agent can query available effects/parameter schemas instead of having them all
+      enumerated in the system prompt permanently (same token-efficiency rationale as the skill
+      system).
+- [ ] Skill content for `keyframing`: port the animatable-parameter list, the scale-unit gotcha,
+      and easing/anticipation pattern guidance from the reference doc directly — this content is
+      implementation-agnostic and transfers cleanly.
+
+### 26g — Time-remapping, transitions, audio-sync, transcript-cleanup tools
+
+- [ ] `SET_TIME_REMAP(agentId, keyframes, replace?)` — variable-speed playback via timeline-
+      position → source-time keyframe mapping, same easing vocabulary as 26f's keyframing tool
+      (share the easing implementation, don't duplicate it a third time). This generalizes
+      Phase 21's speed-ramp-adjacent reverse/loop/boomerang work — check for overlap and prefer
+      expressing reverse (negative slope) and loop (repeated keyframe pattern) as time-remap
+      curves if that doesn't regress the simpler dedicated actions' usability for common cases.
+- [ ] Transitions: this fork already has 20 transitions (README) — the `transitions` skill in
+      Custom's reference has no associated tools of its own (transitions apply via existing
+      item-adjacency, not a dedicated tool per the source doc) — confirm this fork's transition
+      application mechanism (likely Phase 12's `ADD_TRANSITION`) is what the `transitions` skill
+      should document, and write that skill file against this fork's actual mechanism, not
+      Custom's (which wasn't specified in the source doc beyond the skill name).
+- [ ] `SYNC_AND_SWAP(sourceAssetId, targetItemId, from, to)` — multi-camera sync via word-level
+      transcript matching between two assets, placing the synced source at the calculated offset.
+      Requires both assets to have transcripts — reuse this fork's existing Whisper-based
+      transcription (v1) as the transcript source; don't build a second transcription path.
+- [ ] `VIEW_ITEM_DETAILS`/`CONTEXT` with `beats` category (26d) is the `audio-sync` skill's
+      primary tool per the reference — confirm 26d's beats support covers what `audio-sync`
+      needs (tempo type, BPM, narrow-range onset data) before considering 26g's audio-sync
+      coverage complete; this sub-phase mainly needs `SYNC_AND_SWAP` as the net-new tool, beats
+      support belongs to 26d.
+- [ ] Transcript-cleanup tools are the existing `CONTEXT`/`VIEW_ITEM_DETAILS` transcript/
+      transcript_words categories from 26d, plus this fork's existing filler-word/silence
+      detection (`silence_service.py`, wired as an agent tool back in Phase 3 of this plan) — no
+      net-new tool needed here, just skill-file documentation tying the existing pieces together
+      for this specific workflow (remove filler words/dead air).
+- [ ] Write skill files for `time-remapping`, `transitions`, `audio-sync`, and
+      `transcript-cleanup` — each is mostly "here's which existing tools to call and in what
+      order for this workflow," not new mechanics, per the analysis above.
+
+### 26h — Motion graphics tools (new capability — largest net-new build in this phase)
+
+Maps to Custom's `motion-graphics` skill. **This is genuinely new infrastructure** — nothing in
+this fork today supports arbitrary code-driven animated compositions; the closest existing
+things are the keyframe/effect system (26f) and AI image/video generation (existing AI Video
+Generation Hub). Sequence this sub-phase last within Phase 26, and treat it as the most
+discretionary piece if time/resourcing runs short — the other sub-phases (26b–26g) close more
+tangible "agent can't execute its own plan" gaps; this one adds a genuinely new editing
+modality.
+
+- [ ] Evaluate whether to adopt Remotion (React-component-to-video-frame rendering) as the
+      underlying engine, matching Custom's own approach (`addMotionGraphic`'s `code` param is
+      explicitly "React/Remotion component code"), versus a lighter-weight approach (e.g.
+      driving this fork's existing keyframe/effect system with a constrained template+parameter
+      model instead of arbitrary code). Arbitrary LLM-generated React code execution has real
+      security/sandboxing implications (this is server/client-executed code, not just data) that
+      Custom's own architecture must solve — research how before committing; do not wire up
+      "agent writes React code, app `eval`s it" without a sandboxing story (e.g. iframe sandbox
+      with restricted globals, or a WASM-isolated execution context, or Remotion's own
+      server-side rendering path which renders to a video file rather than executing in the
+      user's browser context at all — that last option is likely the safer fit if going this
+      route, since it sidesteps live code execution in the editor's own page).
+  - [ ] Document the security decision explicitly in `AGENTS.md` before implementation — this is
+        a genuine risk surface, not a detail to leave implicit.
+- [ ] `ADD_MOTION_GRAPHIC(code, summary, width, height, x, y, duration?)` — only after the
+      sandboxing/rendering-path decision above is made and implemented safely.
+- [ ] `EDIT_MOTION_GRAPHIC(agentId, action: view/patchCode/updateCode, patches?, code?, summary?)`
+      — prefer targeted patch replacements over full-code replacement, matching Custom's stated
+      preference (reduces the chance of an LLM regenerating subtly-broken full components when a
+      small targeted change was all that was needed).
+- [ ] `BROWSE_PRESETS(category?, query?)`, `APPLY_PRESET(presetId, timelineStart?)` — a curated
+      preset catalog (collages, info-cards, lower-thirds, misc, overlays, slide-in-panels, text,
+      title-cards) is a separate content-curation effort from the code-execution engine above —
+      treat preset catalog population as its own task, likely lower effort than the rendering
+      engine itself, and one that can ship a useful subset of motion-graphics capability (apply a
+      pre-built preset) even if full arbitrary-code generation is deferred or descoped after the
+      security review above.
+- [ ] Write the `motion-graphics` skill file covering preset categories and the patchCode-
+      preferred editing pattern.
+
+### Sub-phase sequencing recommendation
+
+Do 26a (foundational decisions) first — everything else depends on the ID scheme and skill
+storage decisions. After that, 26b/26c/26d are the highest-value, most tractable wins (timeline
+manipulation, captions, observation) and should land before 26e/26f/26g (masking, keyframing,
+time-remap — meaningfully new mechanics but still data/transform problems, not new rendering
+infrastructure). Land 26h last and treat its scope as negotiable if the security/sandboxing
+question turns out to be a bigger lift than expected — shipping 26a through 26g already
+represents this fork's agent reaching genuine parity with a sophisticated competitor's tool
+surface; 26h is the one piece that's a wholly new product capability rather than a parity gap.
+
+---
+
+
 
 - [ ] Type-check (`bun run typecheck` or equivalent) across `apps/web`.
 - [ ] Python static checks (`ruff`/`mypy`, else `python -m py_compile`) across
@@ -511,16 +863,26 @@ practical.
         live preview captures at matching timestamps per Phase 25's defined parity criteria; run
         the before/after preview performance measurement on at least one CPU-only and one
         GPU-available machine.
+  - [ ] Per Phase 26 sub-phase, at least one end-to-end smoke test: a multi-step goal that
+        requires `LOAD_SKILL` followed by 2+ of that skill's associated tools (e.g. for
+        `masking`: load the skill, then `CREATE_MASK` with `textPrompt`, then
+        `EDIT_MASK_PROPERTIES`) — confirming the skill-loading mechanism actually changes agent
+        behavior, not just that the tool returns text nobody acts on. Cover at minimum: 26b
+        (a multi-tool timeline assembly goal), 26c (captions with `splitBySpeaker`), 26d
+        (a `CAPTURE_FRAME` self-verification step after another action), 26e (a smart mask via
+        `textPrompt`), 26f (a multi-keyframe animation with non-linear easing), 26g
+        (`SYNC_AND_SWAP` on two real multi-cam test assets), and 26h if it shipped (one preset
+        application at minimum, one code-generated motion graphic if the sandboxing path was
+        completed).
   - [ ] A full stack restart, confirming all new derived assets/metadata persist (extends v1
         Phase 7's persistence guarantee to every new artifact type introduced this round).
 - [ ] If Docker is not available: clearly state which parts were only statically verified vs.
       actually executed — do not claim end-to-end verification that didn't happen.
 - [ ] Update `AGENTS.md` with anything learned this round: actual stub-closure findings from
       Phase 0, the vocabulary-unification decision made in Phase 13, the matting model chosen in
-      Phase 23 and why, the duration-mismatch strategy decided in Phase 17, and — critically —
-      the fork-lineage finding and Path A/B decision from Phase 25, since that single fact
-      determines how much of this fork's future renderer work can keep tracking upstream vs.
-      must be maintained independently.
+      Phase 23 and why, the duration-mismatch strategy decided in Phase 17, the fork-lineage
+      finding and Path A/B decision from Phase 25, the `agentId` scheme and skill-storage
+      decision from Phase 26a, and the motion-graphics sandboxing decision from Phase 26h.
 - [ ] Update `README.md`'s feature list and competitor comparison table to reflect genuinely
       shipped capabilities from this round — don't list anything here that didn't pass its own
       phase's test criteria above.
@@ -533,6 +895,17 @@ practical.
   and is not what was asked for here; revisit only if a future round explicitly decides this
   fork should re-platform entirely, which is a major strategic decision outside this plan's
   scope.
+- Not aiming for verbatim feature-for-feature parity with Custom's exact ID strings, exact skill
+  prose, or exact model choices (e.g. SAM2 specifically) where this fork's existing architecture
+  differs — Phase 26 adapts the *shape* of Custom's tool/skill system to this codebase, not a
+  byte-for-byte clone. Where adaptation requires a judgment call not already specified in this
+  plan, prefer consistency with this fork's existing conventions (Phase 13's vocabulary
+  unification, the `isDestructive` confirmation policy) over matching Custom's behavior exactly.
+- Not building Phase 26h's arbitrary-code-execution motion graphics engine without first
+  completing and documenting the sandboxing/security review specified in that sub-phase — if
+  that review concludes the risk isn't worth it for this fork's threat model, ship 26h as
+  preset-application-only (`BROWSE_PRESETS`/`APPLY_PRESET`) and treat full code-generation as a
+  separately-scoped future decision, not a default fallback.
 
 - Not building a stock media (video/photo/sticker) library integration — this is a real CapCut
   gap per `REVIEW.md` but requires a licensing/sourcing decision (e.g. Pexels/Pixabay API) that's

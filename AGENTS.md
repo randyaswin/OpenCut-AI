@@ -106,6 +106,23 @@ Still open from v1 (carry forward into this plan's phases, renumbered below):
     several other goals (notably Goal 4's `GET_FRAME_AT` tool, and any goal whose action gets
     verified via `EXPORT_PROJECT`) benefit from landing *after* this exists rather than before —
     but don't block all other work on it; it can proceed in parallel if resourced separately.
+12. **Adopt the full Custom-reference MCP tool vocabulary and skill-loading system** (full detail
+    in `PLAN.md` Phase 26, sub-phases 26a–26h). Custom — a reference competitor product whose exact
+    tool/skill definitions are preserved in `custom-mcp-tool-list-original.md` and
+    `custom-skills-reference-original.md` — exposes ~50 granular MCP tools (timeline assembly,
+    captioning, masking/shapes, keyframing, effects, time-remapping, audio-sync, motion graphics)
+    plus a `loadSkill` mechanism that returns step-by-step guidance on demand before multi-step
+    workflows, instead of carrying all that guidance in the system prompt permanently. This is
+    the most direct, concrete path to closing Goal 3 (expose backend capabilities as tools) and
+    Goal 4 (granular observation) at once — Custom's `context`/`viewItemDetails`/`captureFrame`
+    tools are a more complete version of what Goals 3–4 were already reaching for. Treat Goal 4's
+    `GET_FRAME_AT`/`GET_TRANSCRIPT_RANGE`/`GET_CLIP_NEIGHBORS` as superseded by Phase 26d's richer
+    equivalents if Goal 4 hasn't already landed; reconcile if it has (see Phase 26a). This is
+    intentionally last in the goal list not because it's lowest priority, but because it's the
+    largest single body of new work in this round, and several of its sub-phases (26e masking,
+    26h motion graphics) depend on infrastructure/decisions from Goal 8 (background removal
+    model choice) and Goal 11 (binary renderer, for `CAPTURE_FRAME`'s ideal implementation) —
+    sequence accordingly rather than rigidly goal-number-order.
 
 ## Confirmation policy (decided in v1, extended here — do not relitigate the base rule)
 
@@ -129,9 +146,51 @@ Extensions needed this round:
   add derivative).
 - **Background removal** is non-destructive if applied to a duplicated/matted layer; destructive
   if it replaces the original clip's pixels in place. Default to non-destructive.
+- **Phase 26's tool set (Goal 12)** mostly falls cleanly on the non-destructive side and should
+  auto-execute: masks/shapes/keyframes/effects are additive layers, not in-place pixel edits;
+  `TRANSFORM_ITEM`/`EDIT_PROPERTIES` modify existing item state but are easily undoable/
+  re-editable (not a one-way destructive operation in the data-loss sense this policy targets).
+  Exceptions that DO need confirmation: `DELETE_ITEMS` (obviously destructive), `MOVE_ITEM`/
+  `SPLIT_ITEM` with `ripple: true` (ripple affects downstream items beyond the targeted one —
+  surprising blast radius warrants confirmation even though it's technically reversible),
+  `RESIZE_CANVAS` (global change affecting every item's apparent framing), and `SYNC_AND_SWAP`
+  (places a new item at a calculated position that could be wrong if transcript matching fails —
+  show the calculated offset for confirmation before placing). `EXPORT_PROJECT`-equivalent calls
+  triggered from within Phase 26 tools follow the existing slow/resource-heavy confirmation
+  precedent, not the destructiveness one.
 
 ## Known architecture facts (carried from v1 — re-verify before trusting, don't re-derive)
 
+- **Two reference documents define the exact target shape for Goal 12 / `PLAN.md` Phase 26**:
+  `custom-mcp-tool-list-original.md` (verbatim tool definitions/parameters for ~50 MCP tools from
+  a reference competitor product, Custom) and `custom-skills-reference-original.md` (the
+  `loadSkill`-based skill system and which tools each skill governs). These are adaptation
+  targets, not a spec to clone byte-for-byte — Custom's `agentId` scheme, asset model, and
+  underlying renderer differ from this fork's; Phase 26a's first job is deciding how much of
+  Custom's ID/storage conventions this fork adopts vs. adapts. Don't re-derive Custom's tool
+  parameters from memory once Phase 26 work starts — read the source docs directly each time,
+  they're long and precise enough that paraphrasing from a summary will lose real detail (exact
+  easing-handle normalization, exact mutual-exclusivity rules between params, etc.).
+- **All 13 skill files' actual content has already been written and is provided** (in this
+  round's accompanying `/skills/*.md` files), not just outlined. These are final, agent-facing
+  instructional prose — the literal text `LOAD_SKILL` should return — written against the
+  tool/parameter shapes the two reference docs above specify, using this fork's planned
+  `EditorActionType` action names (`CREATE_MASK`, `WRITE_KEYFRAMES`, etc.) rather than Custom's
+  camelCase tool names. Phase 26a's remaining work for skills is placement/wiring (copy files
+  into the chosen storage path, build the `LOAD_SKILL` tool, update the system prompt's routing
+  table) — not authoring. If any sub-phase's actual implementation ends up naming an action or
+  parameter differently than these files assume, update the skill file to match the real
+  implementation as part of that sub-phase, don't leave the mismatch for later.
+- **`skills/_LOAD_SKILL_overview.md` is a distinct, always-visible counterpart to the 13
+  on-demand skill files — don't confuse the two.** The 13 skill files are fetched only when
+  `LOAD_SKILL(skillName)` is actually called; they are never part of default agent context. The
+  overview file is the opposite: its content must live in `LOAD_SKILL`'s own tool `description`
+  field (always in context, like any tool description) and/or the system prompt's routing
+  instruction, because the agent needs a way to pick the right `skillName` *without* having
+  already loaded every skill to find out. This file explicitly enumerates all 13 skill names
+  (including the 4 that aren't named in Custom's own top-level `loadSkill` description and are
+  only discoverable there via other tools' descriptions referencing them) — this fork's version
+  deliberately surfaces all of them at the routing layer rather than relying on that indirection.
 - **Preview rendering is currently DOM/CSS-based; export is a separate path** (per the user's own
   framing of this round's renderer work) — this is the source of preview/export mismatch bugs
   and the performance ceiling addressed in Goal 11 / `PLAN.md` Phase 25.
