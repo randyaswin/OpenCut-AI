@@ -1,4 +1,4 @@
-import type { FaceDetectionResult, FaceFrame } from "@/types/ai";
+import type { FaceDetectionResult, FaceFrame, ObjectDetectionResult, ObjectFrame, DetectionResult } from "@/types/ai";
 import type { NumberKeyframe } from "@/types/animation";
 
 export type ReframeAspectRatio = "9:16" | "1:1" | "4:5" | "16:9" | "custom";
@@ -36,7 +36,7 @@ export interface ReframeKeyframes {
 export interface ReframeResult {
 	keyframes: ReframeKeyframes;
 	preset: ReframePreset;
-	detectionResult: FaceDetectionResult;
+	detectionResult: DetectionResult;
 	framesAnalyzed: number;
 }
 
@@ -51,20 +51,19 @@ export function getDefaultReframeOptions(): ReframeOptions {
 }
 
 export function computeReframeKeyframes(
-	detection: FaceDetectionResult,
+	detection: DetectionResult,
 	options: ReframeOptions,
 ): ReframeKeyframes {
-	const { frames, video_width: vw, video_height: vh } = detection;
+	const { video_width: vw, video_height: vh } = detection;
 	if (vw === 0 || vh === 0) {
 		return { positionX: [], positionY: [], scale: [] };
 	}
 
 	const targetAspect = options.targetWidth / options.targetHeight;
 	const sourceAspect = vw / vh;
-
 	const isCropNeeded = Math.abs(targetAspect - sourceAspect) > 0.01;
 
-	if (!isCropNeeded || frames.length === 0) {
+	if (!isCropNeeded || detection.frames.length === 0) {
 		return {
 			positionX: [{ id: "rx-0", time: 0, value: 0, interpolation: "linear" }],
 			positionY: [{ id: "ry-0", time: 0, value: 0, interpolation: "linear" }],
@@ -74,12 +73,18 @@ export function computeReframeKeyframes(
 
 	const rawCenters: { time: number; cx: number; cy: number }[] = [];
 
-	for (const frame of frames) {
-		const primary = selectPrimaryFace(frame, options.minConfidence);
-		if (!primary) continue;
+	// Determine if detection is face or object based on frame shape
+	const first = detection.frames[0];
+	const isFace = first != null && "faces" in first;
 
-		const cx = primary.x + primary.width / 2;
-		const cy = primary.y + primary.height / 2;
+	for (const frame of detection.frames) {
+		const bbox: { x: number; y: number; width: number; height: number } | null = isFace
+			? selectPrimaryFace(frame as FaceFrame, options.minConfidence)
+			: selectPrimaryObject(frame as ObjectFrame, options.minConfidence);
+		if (!bbox) continue;
+
+		const cx = bbox.x + bbox.width / 2;
+		const cy = bbox.y + bbox.height / 2;
 
 		rawCenters.push({ time: frame.timestamp, cx, cy });
 	}
@@ -100,10 +105,8 @@ export function computeReframeKeyframes(
 
 	for (let i = 0; i < smoothed.length; i++) {
 		const { time, cx, cy } = smoothed[i];
-
 		const offsetX = reframeOffset(cx, 0.5, targetAspect, sourceAspect, options.padding);
 		const offsetY = reframeOffset(cy, 0.5, 1, 1, options.padding);
-
 		positionX.push({
 			id: `rx-${i}`,
 			time,
@@ -121,7 +124,6 @@ export function computeReframeKeyframes(
 	const cropScale = targetAspect > sourceAspect
 		? sourceAspect / targetAspect
 		: targetAspect / sourceAspect;
-
 	const fitScale = 1 / cropScale;
 
 	scale.push({
@@ -140,13 +142,17 @@ function selectPrimaryFace(
 ): { x: number; y: number; width: number; height: number } | null {
 	const valid = frame.faces.filter((f) => f.confidence >= minConfidence);
 	if (valid.length === 0) return null;
+	valid.sort((a, b) => (b.width * b.height) - (a.width * a.height));
+	return valid[0];
+}
 
-	valid.sort((a, b) => {
-		const areaA = a.width * a.height;
-		const areaB = b.width * b.height;
-		return areaB - areaA;
-	});
-
+function selectPrimaryObject(
+	frame: ObjectFrame,
+	minConfidence: number,
+): { x: number; y: number; width: number; height: number; label: string } | null {
+	const valid = frame.objects.filter((o) => o.confidence >= minConfidence);
+	if (valid.length === 0) return null;
+	valid.sort((a, b) => (b.width * b.height) - (a.width * a.height));
 	return valid[0];
 }
 
@@ -155,14 +161,11 @@ function smoothCenters(
 	windowSec: number,
 ): { time: number; cx: number; cy: number }[] {
 	if (centers.length <= 2) return centers;
-
 	const result: { time: number; cx: number; cy: number }[] = [];
-
 	for (let i = 0; i < centers.length; i++) {
 		let sumCx = 0;
 		let sumCy = 0;
 		let count = 0;
-
 		for (let j = 0; j < centers.length; j++) {
 			if (Math.abs(centers[j].time - centers[i].time) <= windowSec) {
 				sumCx += centers[j].cx;
@@ -170,14 +173,8 @@ function smoothCenters(
 				count++;
 			}
 		}
-
-		result.push({
-			time: centers[i].time,
-			cx: sumCx / count,
-			cy: sumCy / count,
-		});
+		result.push({ time: centers[i].time, cx: sumCx / count, cy: sumCy / count });
 	}
-
 	return result;
 }
 
