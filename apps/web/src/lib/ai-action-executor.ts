@@ -12,6 +12,7 @@ function getEditorCore() {
 }
 
 export function isDestructiveAction(actionType: EditorActionType): boolean {
+	if (actionType === "SELECT_MUSIC") return false;
 	return [
 		"REMOVE_SEGMENTS",
 		"DELETE_CLIPS",
@@ -809,6 +810,83 @@ export async function executeAction(action: EditorAction): Promise<void> {
 			break;
 		}
 
+		case "SELECT_MUSIC": {
+			// Autopilot variant: mood + energy → mood_map API → Freesound → best match → timeline
+			try {
+				const editor = getEditorCore();
+				const projectId = editor.project.getActive().id;
+				const mood = (action.params.mood as string) || "neutral";
+				const energy = Math.max(1, Math.min(10, Math.round((action.params.energy as number) || 5)));
+				const maxDuration = (action.params.duration as number) || 30;
+
+				// 1. Resolve mood → Freesound params
+				const mmRes = await fetch(`/api/mood-map?mood=${encodeURIComponent(mood)}&energy=${energy}`);
+				if (!mmRes.ok) throw new Error("mood_map API failed");
+				const moodMap = await mmRes.json();
+
+				// 2. Search Freesound with resolved query
+				const q = encodeURIComponent(moodMap.query);
+				const durFilter = maxDuration > 0 ? `&duration_max=${moodMap.duration_max}` : "";
+				const sRes = await fetch(`/api/sounds/search?q=${q}&type=songs${durFilter}`);
+				if (!sRes.ok) throw new Error("Freesound search failed");
+				const sData = await sRes.json();
+
+				if (!sData.results || sData.results.length === 0) {
+					console.warn("[ai-action-executor] SELECT_MUSIC: no results from Freesound");
+					break;
+				}
+
+				// 3. Score results — prefer tracks whose bpm falls within mood_map's range
+				const bpmMin = moodMap.bpm_min || 0;
+				const bpmMax = moodMap.bpm_max || 999;
+				const scored = sData.results.map((t: any) => {
+					const bpm = t.bpm ? parseInt(t.bpm) : 0;
+					let score = 0;
+					if (bpm >= bpmMin && bpm <= bpmMax) score += 10;
+					else if (bpm > 0) score += 2; // known bpm but out of range
+					if (t.duration && maxDuration > 0 && t.duration <= maxDuration * 1.5) score += 5;
+					if (t.previewUrl) score += 3;
+					return { ...t, _score: score };
+				});
+				scored.sort((a: any, b: any) => b._score - a._score);
+				const best = scored[0];
+
+				// 4. Download & insert
+				const previewUrl = best.previewUrl;
+				if (!previewUrl) {
+					console.warn("[ai-action-executor] SELECT_MUSIC: best match has no preview URL");
+					break;
+				}
+
+				const audioRes = await fetch(previewUrl);
+				const blob = await audioRes.blob();
+				const file = new File([blob], "music.mp3", { type: audioRes.headers.get("content-type") || "audio/mpeg" });
+
+				const mediaId = await editor.media.addMediaAsset({
+					projectId,
+					asset: { type: "audio", file, url: URL.createObjectURL(file), name: best.name, duration: best.duration || maxDuration } as any,
+				});
+				const trackId = editor.timeline.addTrack({ type: "audio" });
+				editor.timeline.insertElement({
+					element: {
+						type: "audio",
+						sourceType: "upload",
+						mediaId,
+						name: best.name,
+						startTime: 0,
+						duration: best.duration || maxDuration,
+						trimStart: 0,
+						trimEnd: 0,
+						volume: 0.5,
+					} as any,
+					placement: { mode: "explicit" as const, trackId, startTime: 0 },
+				});
+			} catch (e) {
+				console.error("[ai-action-executor] Failed SELECT_MUSIC:", e);
+			}
+			break;
+		}
+
 		case "EXPORT_PROJECT": {
 			try {
 				const editor = getEditorCore();
@@ -828,6 +906,7 @@ export async function executeAction(action: EditorAction): Promise<void> {
 				const th = parseInt(hStr) || 16;
 				
 				const subject = action.params.subject as string | undefined;
+				const isObjectSubject = subject && !["face", "person"].includes(subject.toLowerCase());
 
 				const tracks = editor.timeline.getTracks();
 				for (const track of tracks) {
@@ -836,12 +915,14 @@ export async function executeAction(action: EditorAction): Promise<void> {
 							const media = editor.media.getAssetById(el.mediaId);
 							if (media?.file) {
 								const { computeReframeKeyframes, getDefaultReframeOptions } = await import("@/lib/reframe/reframe-types");
-								const detection = await aiClient.detectFaces(media.file, { sampleInterval: 0.5, subject });
+								const detection = isObjectSubject
+									? await aiClient.detectObjects(media.file, { sampleInterval: 0.5, subject: subject! })
+									: await aiClient.detectFaces(media.file, { sampleInterval: 0.5, subject });
 								
 								const opts = {
 									...getDefaultReframeOptions(),
-									targetWidth: tw * 100, // proportional width
-									targetHeight: th * 100, // proportional height
+									targetWidth: tw * 100,
+									targetHeight: th * 100,
 								};
 								
 								const keyframes = computeReframeKeyframes(detection, opts);
